@@ -4,12 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ATS Resume Optimizer — Beat the Bots, Land the Job</title>
-  <meta name="description" content="Free ATS resume optimizer. Paste your resume and job description, get a keyword-optimized resume with score. No signup, no data stored." />
+  <meta name="description" content="ATS resume optimizer. Upload or paste your resume + job description, get a keyword-optimized resume with score. Password-protected, invite-only." />
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <!-- pdf.js for PDF parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
   <!-- jsPDF for PDF export -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -18,8 +21,32 @@
 </head>
 <body>
 
+<!-- ── Password Gate Overlay ── -->
+<div id="passwordGate" class="gate-overlay" style="display:none">
+  <div class="gate-card fade-in">
+    <div class="gate-lock">🔒</div>
+    <h2 class="gate-title">Invite Only</h2>
+    <p class="gate-desc">This tool is available to invited users.<br>Enter your access password to continue.</p>
+    <div id="gateError" class="gate-error" style="display:none"></div>
+    <input
+      type="password"
+      id="gatePasswordInput"
+      class="gate-input"
+      placeholder="Enter access password…"
+      autocomplete="current-password"
+    />
+    <button id="gateSubmitBtn" class="btn btn-primary gate-btn">
+      <span id="gateBtnText">Enter →</span>
+      <span id="gateBtnSpinner" class="gate-spinner" style="display:none"></span>
+    </button>
+    <p class="gate-contact">
+      Don't have access? Contact <strong>Darshan</strong> for an invite.
+    </p>
+  </div>
+</div>
+
 <header>
-  <div class="header-badge">100% Free · No Signup · Works Client-Side</div>
+  <div class="header-badge" id="headerBadge">Invite-Only · AI-Powered · No Data Stored</div>
   <h1>ATS Resume Optimizer</h1>
   <p>Beat applicant tracking systems. Get more interviews.</p>
 </header>
@@ -34,20 +61,35 @@
 
     <div class="card">
       <div class="input-grid">
+
+        <!-- Resume column -->
         <div>
           <div class="field-label"><span class="dot"></span>Your Current Resume</div>
+
+          <!-- PDF Upload zone -->
+          <label class="upload-zone" id="uploadZone" for="pdfFileInput">
+            <input type="file" id="pdfFileInput" accept=".pdf" style="display:none" />
+            <div class="upload-icon-wrap">📄</div>
+            <div class="upload-main">Upload PDF <span class="upload-or">or drag &amp; drop</span></div>
+            <div class="upload-sub">Parsed in your browser · never sent to a server</div>
+          </label>
+
+          <div id="uploadStatus" class="upload-status" style="display:none"></div>
+
+          <div class="paste-divider"><span>or paste text below</span></div>
+
           <textarea
             id="resumeInput"
-            placeholder="Paste your full resume here — any format, plain text preferred.
+            placeholder="Paste your resume here (any format, plain text ideal).
 
 Example:
 Jane Doe
 jane@email.com | 555-123-4567 | linkedin.com/in/janedoe
 
 EXPERIENCE
-Software Engineer at Acme Corp (2021–Present)
+Software Engineer — Acme Corp (2021–Present)
 • Built microservices using Node.js and Docker
-• Led a team of 4 engineers...
+• Led a team of 4 engineers improving CI/CD pipeline
 
 EDUCATION
 B.S. Computer Science, State University, 2020
@@ -55,7 +97,13 @@ B.S. Computer Science, State University, 2020
 SKILLS
 JavaScript, React, Node.js, SQL, Docker, AWS"
           ></textarea>
+
+          <div id="parsedNote" class="parsed-note" style="display:none">
+            ✓ PDF text extracted — review and edit above before optimizing
+          </div>
         </div>
+
+        <!-- Job Description column -->
         <div>
           <div class="field-label"><span class="dot" style="background:#22c55e"></span>Job Description</div>
           <textarea
@@ -76,30 +124,8 @@ Requirements:
         </div>
       </div>
 
-      <!-- AI section -->
-      <div class="ai-section mt-16">
-        <div id="aiToggle" class="ai-toggle">
-          <span class="arrow">▶</span>
-          <span>Advanced: AI Rewrite <em style="color:var(--text-muted);font-style:normal;font-size:12px">(optional — works free without a key)</em></span>
-        </div>
-        <div id="aiBody" class="ai-body">
-          <div class="ai-note">
-            <strong>Works free with no key</strong> — the built-in engine scores and rewrites your resume using smart keyword matching. Add a key only for AI-enhanced, human-quality rewrites powered by Claude.
-          </div>
-          <div class="ai-input-row">
-            <input
-              type="password"
-              id="apiKeyInput"
-              class="ai-key-input"
-              placeholder="sk-ant-... (Anthropic API key, optional)"
-              autocomplete="off"
-            />
-          </div>
-          <div style="margin-top:10px;font-size:12px;color:var(--text-muted);">
-            Your key is never stored or sent to our servers — it goes directly to api.anthropic.com from your browser.
-          </div>
-        </div>
-      </div>
+      <!-- Mode indicator -->
+      <div id="modeBar" class="mode-bar" style="display:none"></div>
     </div>
 
     <div class="btn-row">
@@ -114,7 +140,7 @@ Requirements:
   <section id="loadingSection" style="display:none;">
     <div class="card" style="text-align:center;padding:48px 24px;">
       <div class="spinner"></div>
-      <div class="loading-text">Analyzing your resume against the job description...</div>
+      <div class="loading-text" id="loadingText">Analyzing your resume against the job description…</div>
       <div class="loading-steps">
         <div class="step-item" data-step="0">1. Parsing job description keywords</div>
         <div class="step-item" data-step="1">2. Computing baseline ATS score</div>
@@ -128,7 +154,6 @@ Requirements:
   <!-- ── Results Section ── -->
   <section id="resultsSection" style="display:none;">
 
-    <!-- Header row -->
     <div class="results-header">
       <h2>
         Optimization Results
@@ -184,18 +209,18 @@ Requirements:
       </div>
     </div>
 
-    <!-- Optimized resume preview -->
+    <!-- Resume preview -->
     <div class="card mt-24">
       <div class="section-title" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="icon">📄</span>
           ATS-Optimized Resume Preview
         </div>
-        <span style="font-size:12px;color:var(--text-muted);font-weight:400;">Single-column · ATS-parseable · Selectable text</span>
+        <span style="font-size:12px;color:var(--text-muted);font-weight:400;">Single-column · Selectable text · ATS-parseable</span>
       </div>
       <pre id="resumePreview" class="resume-preview"></pre>
       <div style="margin-top:16px;text-align:center;">
-        <button id="downloadBtn2" class="btn btn-success" onclick="downloadPDF()">
+        <button class="btn btn-success" onclick="downloadPDF()">
           <span>⬇</span> Download PDF
         </button>
       </div>
@@ -211,7 +236,7 @@ Requirements:
         <li>• <strong style="color:var(--text-primary);">Use exact keyword matches</strong> — ATS systems look for exact phrases from the JD, not synonyms.</li>
         <li>• <strong style="color:var(--text-primary);">Quantify impact</strong> — Add metrics like "reduced latency by 40%" wherever possible.</li>
         <li>• <strong style="color:var(--text-primary);">Standard section headings</strong> — Use EXPERIENCE, EDUCATION, SKILLS exactly as shown.</li>
-        <li>• <strong style="color:var(--text-primary);">No tables or columns in your final PDF</strong> — Some ATS systems can't parse them. This tool generates a clean single-column PDF.</li>
+        <li>• <strong style="color:var(--text-primary);">No tables or columns in your final PDF</strong> — This tool generates a clean single-column PDF that every ATS can parse.</li>
         <li>• <strong style="color:var(--text-primary);">Tailor per application</strong> — Run this tool for each role you apply to for best results.</li>
       </ul>
     </div>
@@ -221,12 +246,9 @@ Requirements:
 </main>
 
 <footer>
-  Made by <strong>Darshan</strong> &nbsp;·&nbsp; No data stored &nbsp;·&nbsp; 100% client-side &nbsp;·&nbsp;
+  Made by <strong>Darshan</strong> &nbsp;·&nbsp; No resume data stored &nbsp;·&nbsp;
   <a href="https://github.com/nayakdarshan/ats-resume-optimizer" target="_blank" rel="noopener">GitHub</a>
 </footer>
-
-<!-- Hidden element for PDF source (not used for image-based PDF — jsPDF draws text directly) -->
-<div id="pdfContent" aria-hidden="true"></div>
 
 <script src="app.js"></script>
 </body>
