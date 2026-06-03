@@ -166,6 +166,20 @@ textarea:focus {
   margin-top: 8px;
 }
 
+.btn-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Payment note ── */
+.payment-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -563,102 +577,6 @@ footer a {
 
 .fade-in { animation: fadeIn 0.4s ease forwards; }
 
-/* ── Password Gate ── */
-.gate-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 11, 18, 0.92);
-  backdrop-filter: blur(8px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-}
-
-.gate-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 40px 32px;
-  max-width: 400px;
-  width: 100%;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
-  text-align: center;
-}
-
-.gate-lock {
-  font-size: 40px;
-  margin-bottom: 16px;
-}
-
-.gate-title {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  margin-bottom: 10px;
-}
-
-.gate-desc {
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.6;
-  margin-bottom: 24px;
-}
-
-.gate-error {
-  background: var(--danger-bg);
-  border: 1px solid rgba(239,68,68,0.3);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  color: #fca5a5;
-  font-size: 13px;
-  margin-bottom: 14px;
-  text-align: left;
-}
-
-.gate-input {
-  width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: var(--font);
-  font-size: 15px;
-  padding: 12px 16px;
-  outline: none;
-  text-align: center;
-  letter-spacing: 0.05em;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  margin-bottom: 12px;
-}
-
-.gate-input:focus {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
-.gate-btn {
-  width: 100%;
-  justify-content: center;
-}
-
-.gate-contact {
-  margin-top: 20px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.gate-spinner {
-  width: 18px; height: 18px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  display: inline-block;
-  vertical-align: middle;
-}
-
 /* ── Upload Zone ── */
 .upload-zone {
   display: flex;
@@ -739,4 +657,137 @@ footer a {
   background: var(--warning-bg);
   border: 1px solid rgba(245,158,11,0.2);
   color: var(--warning);
+}
+
+/* ── Footer admin icon ── */
+footer {
+  position: relative;
+}
+
+.admin-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0.18;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  margin-left: 8px;
+  transition: opacity 0.2s;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.admin-icon-btn:hover { opacity: 0.55; }
+
+.admin-icon-btn.admin-icon-active {
+  opacity: 0.9;
+  color: var(--accent);
+}
+
+/* ── Admin floating panel ── */
+.admin-panel {
+  position: fixed;
+  bottom: 64px;
+  right: 16px;
+  z-index: 600;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  min-width: 220px;
+  animation: fadeIn 0.15s ease;
+}
+
+.admin-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.admin-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
+.admin-pw-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-pw-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.admin-pw-input:focus { border-color: var(--border-focus); }
+.admin-pw-input::placeholder { color: var(--text-muted); }
+
+.admin-submit-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 15px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.admin-submit-btn:hover { background: var(--accent-hover); }
+.admin-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Admin active view */
+.admin-active-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.admin-exit-btn {
+  font-size: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.admin-exit-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── Toast notification ── */
+.toast-msg {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 20px;
+  border-radius: 20px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  z-index: 700;
+  transition: opacity 0.5s;
+  white-space: nowrap;
 }

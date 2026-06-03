@@ -2,9 +2,21 @@
 
 **Beat applicant tracking systems. Get more interviews.**
 
-Upload or paste your resume, paste a job description, and get back a keyword-optimized resume with a Before/After ATS score, keyword gap table, and a clean downloadable PDF.
+Upload your resume PDF + paste a job description → get an AI-optimized resume with Before/After ATS score, keyword gap table, and a clean downloadable PDF. ₹20 per optimization, paid securely via Razorpay.
 
 🔗 **Live Tool:** https://nayakdarshan.github.io/ats-resume-optimizer/
+
+---
+
+## How It Works
+
+1. **Upload** your resume PDF (parsed locally by pdf.js — never leaves your device)
+2. **Paste** the job description
+3. **Click "Optimize My Resume — ₹20"**
+4. Pay ₹20 via Razorpay (UPI / cards / netbanking)
+5. Worker verifies payment server-side, calls Claude AI to rewrite your resume
+6. Review the Before/After ATS scores, keyword gap table, and optimized preview
+7. **Download PDF** — clean single-column, ATS-parseable, selectable text
 
 ---
 
@@ -12,99 +24,114 @@ Upload or paste your resume, paste a job description, and get back a keyword-opt
 
 | Feature | Details |
 |---|---|
-| **PDF Upload** | Upload your resume as a PDF — text is parsed in your browser via pdf.js (never sent anywhere) |
-| **Paste fallback** | Prefer to paste plain text? Works too. Textarea is always editable. |
-| **ATS Score** | Before & After score (0–100) based on weighted keyword match against the JD |
-| **Keyword Gap Table** | Shows every top JD keyword: was it in your resume? was it added? |
-| **AI Rewrite** | Claude rewrites your resume section-by-section when a Worker is configured (invite-only) |
-| **Client-side fallback** | Works fully offline/free when no Worker is set up |
-| **PDF Export** | jsPDF generates real selectable text (not a screenshot) — ATS-parseable single-column PDF |
-| **Password Gate** | Invite-only access gate when Worker is active |
-
----
-
-## How to Use
-
-1. Open the [live tool](https://nayakdarshan.github.io/ats-resume-optimizer/)
-2. Enter the access password (invite-only when Worker is deployed; no gate in client-side mode)
-3. **Upload your resume PDF** or paste text into the textarea
-4. **Paste the job description** in the right box
-5. Click **"Optimize My Resume"**
-6. Review the Before/After ATS scores, keyword gap table, and rewritten resume
-7. Click **"Download PDF"** to save the clean, ATS-friendly PDF
+| **PDF Upload** | pdf.js parses resume locally; text never leaves the browser |
+| **₹20 Payment** | Razorpay Checkout (UPI / card / netbanking); signature verified server-side |
+| **AI Rewrite** | Claude rewrites only the bullets; company names, titles, dates untouched |
+| **ATS Scores** | Before & After 0–100 keyword match score with animated gauges |
+| **Keyword Gap Table** | Every top JD keyword: was it in your resume? was it added? |
+| **PDF Export** | jsPDF real selectable text, fixed professional ATS template |
+| **Hidden Admin Mode** | Tiny `⚙` icon in footer → password → free optimizations (admin only) |
 
 ---
 
 ## Architecture
 
 ```
-GitHub Pages (static)          Cloudflare Worker (serverless)
-  index.html                     worker/worker.js
-  styles.css        ──POST──►    • validates ACCESS_PASSWORD
-  app.js            ◄──JSON──    • calls Anthropic API
-                                 • returns { beforeScore, afterScore,
-                                            missingKeywords, optimizedResume }
+Browser                            Cloudflare Worker
+  │                                      │
+  ├─ pdf.js parses PDF locally           │
+  │                                      │
+  ├─── POST create-order ──────────────► │
+  │◄── { orderId, keyId } ──────────────┤ (Razorpay Orders API)
+  │                                      │
+  ├─ Razorpay Checkout opens             │
+  ├─ User pays ₹20                       │
+  │                                      │
+  ├─── POST optimize ──────────────────► │
+  │    { order_id, payment_id,           │
+  │      signature, resumeText, jdText } │
+  │                              verify HMAC-SHA256(order_id|payment_id, KEY_SECRET)
+  │                              → callClaude(resumeText, jdText, ANTHROPIC_KEY)
+  │◄── { beforeScore, afterScore, ──────┤
+  │      missingKeywords, resume:{} }    │
+  │                                      │
+  └─ renderResumeHTML + generatePDFFromJSON
 ```
 
-The frontend also runs a client-side keyword scorer at all times (for the gap table and as a fallback).
+**Admin bypass** (skip payment):
+```
+Click ⚙ in footer → enter ACCESS_PASSWORD → admin mode → free optimizations
+```
+The admin password is validated by the Worker ping endpoint. It never appears in the frontend code.
 
 ---
 
-## Worker Setup (for AI mode)
+## Payment & Security
 
-### 1. Install Wrangler
+- **Razorpay Key ID** (public) is returned by the Worker in `create-order` — it is **not** hardcoded in the frontend
+- **Razorpay Key Secret** lives only as a Cloudflare Worker secret — never exposed to the browser
+- **Signature verification** happens server-side using `HMAC-SHA256(orderId|paymentId, KEY_SECRET)`
+- A `402` is returned if the signature is invalid; the AI never runs
+- **One payment = one optimization**: the Razorpay signature is unique per payment; the Worker verifies it before proceeding
+- Resume text is **never stored** — processed in memory and discarded
+
+---
+
+## Worker Setup & Secrets
+
+### 1. Install Wrangler & deploy
 
 ```bash
 npm install -g wrangler
 wrangler login
-```
-
-### 2. Deploy the Worker
-
-```bash
 cd worker
 wrangler deploy
 ```
 
-Note the Worker URL printed at the end (e.g. `https://ats-optimizer.YOUR-SUBDOMAIN.workers.dev`).
-
-### 3. Set secrets
+### 2. Set all required secrets
 
 ```bash
+# Anthropic API key (already set)
 wrangler secret put ANTHROPIC_API_KEY
-# Paste your Anthropic key when prompted (starts with sk-ant-)
 
+# Admin bypass password (already set)
 wrangler secret put ACCESS_PASSWORD
-# Choose an access password — share it only with invited users
+
+# Razorpay keys — get from dashboard.razorpay.com > Settings > API Keys
+wrangler secret put RAZORPAY_KEY_ID
+# Paste your Key ID when prompted (e.g. rzp_live_xxxx or rzp_test_xxxx)
+
+wrangler secret put RAZORPAY_KEY_SECRET
+# Paste your Key Secret when prompted
 ```
 
-### 4. Wire up the frontend
+> **Razorpay Test Mode:** You can use `rzp_test_*` keys during development — no real money is charged. Switch to `rzp_live_*` after KYC approval.
 
-Open `app.js` and replace the placeholder on **line 4**:
+### 3. Razorpay account setup
+
+1. Sign up at **https://dashboard.razorpay.com**
+2. Complete KYC (or use Test Mode keys immediately without KYC)
+3. Go to **Settings → API Keys → Generate Key**
+4. Copy the **Key ID** and **Key Secret**
+5. Run the two `wrangler secret put` commands above
+
+### 4. Frontend config
+
+No frontend changes needed — the Razorpay Key ID is returned dynamically by the Worker. The `WORKER_URL` constant at the top of `app.js` is the only frontend config:
 
 ```js
-const WORKER_URL = 'https://ats-optimizer.YOUR-SUBDOMAIN.workers.dev';
+const WORKER_URL = 'https://ats-optimizer.nayakdarshan.workers.dev';
 ```
-
-Then commit and push:
-
-```bash
-git add app.js
-git commit -m "chore: set Worker URL"
-git push
-```
-
-GitHub Pages will redeploy automatically (~1 min). The password gate will now appear on load.
 
 ---
 
-## Privacy & Security
+## Admin Mode
 
-- **Resume text is never stored** — processed in memory and discarded after each request
-- **API key is never in the frontend** — stored as a Cloudflare secret, never committed to the repo
-- **Access password is never in the frontend** — same: Cloudflare secret only
-- **PDF parsing is local** — pdf.js runs in the browser; the PDF bytes never leave your device
-- **No cookies, no localStorage, no analytics**
+1. Open the live tool
+2. Click the tiny **⚙** icon in the footer (very faint — intentionally subtle)
+3. Enter the `ACCESS_PASSWORD` (same secret as before)
+4. The button changes to **"Optimize My Resume (Admin — Free)"**
+5. Optimizations are free until you click **Exit** in the panel or refresh
 
 ---
 
@@ -113,16 +140,15 @@ GitHub Pages will redeploy automatically (~1 min). The password gate will now ap
 ```bash
 git clone https://github.com/nayakdarshan/ats-resume-optimizer.git
 cd ats-resume-optimizer
-open index.html   # or double-click — no server needed for client-side mode
+open index.html   # no server needed for UI
 ```
 
 For Worker development:
 ```bash
 cd worker
-wrangler dev   # runs Worker locally at localhost:8787
+wrangler dev   # runs at localhost:8787
 ```
-
-Then temporarily set `WORKER_URL = 'http://localhost:8787'` in `app.js` to test end-to-end.
+Then temporarily set `WORKER_URL = 'http://localhost:8787'` in `app.js`.
 
 ---
 
