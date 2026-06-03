@@ -1,7 +1,7 @@
 // ── CONFIG ────────────────────────────────────────────────────────────────────
 // After deploying the Cloudflare Worker, paste your Worker URL here.
 // Leave as-is to run in free client-side mode (no password gate, no AI rewrite).
-const WORKER_URL = 'YOUR_WORKER_URL_HERE';
+const WORKER_URL = 'https://ats-optimizer.nayakdarshan.workers.dev';
 // ─────────────────────────────────────────────────────────────────────────────
 
 // In-memory session state (never persisted to storage)
