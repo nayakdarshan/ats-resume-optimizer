@@ -4,42 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ATS Resume Optimizer — Beat the Bots, Land the Job</title>
-  <meta name="description" content="AI-powered ATS resume optimizer. Upload your resume PDF + job description, get a keyword-optimized resume with score. Invite-only." />
+  <meta name="description" content="AI-powered ATS resume optimizer. Upload your resume PDF + job description, get a keyword-optimized resume with score. ₹20 per use." />
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 
-  <!-- pdf.js for PDF text extraction (client-side, no upload) -->
+  <!-- pdf.js — client-side PDF text extraction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
-  <!-- jsPDF for PDF export (real selectable text) -->
+  <!-- jsPDF — real selectable-text PDF export -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <!-- Razorpay Checkout — payment modal -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
-<!-- ── Password Gate ── -->
-<div id="passwordGate" class="gate-overlay" style="display:none">
-  <div class="gate-card fade-in">
-    <div class="gate-lock">🔒</div>
-    <h2 class="gate-title">Invite Only</h2>
-    <p class="gate-desc">This tool is available to invited users.<br>Enter your access password to continue.</p>
-    <div id="gateError" class="gate-error" style="display:none"></div>
-    <input type="password" id="gatePasswordInput" class="gate-input"
-           placeholder="Enter access password…" autocomplete="current-password" />
-    <button id="gateSubmitBtn" class="btn btn-primary gate-btn">
-      <span id="gateBtnText">Enter →</span>
-      <span id="gateBtnSpinner" class="gate-spinner" style="display:none"></span>
-    </button>
-    <p class="gate-contact">Don't have access? Contact <strong>Darshan</strong> for an invite.</p>
-  </div>
-</div>
-
 <header>
-  <div class="header-badge" id="headerBadge">Invite-Only · AI-Powered · No Data Stored</div>
+  <div class="header-badge" id="headerBadge">AI-Powered · Secure Payment · No Data Stored</div>
   <h1>ATS Resume Optimizer</h1>
   <p>Beat applicant tracking systems. Get more interviews.</p>
 </header>
@@ -53,7 +39,7 @@
     <div class="card">
       <div class="input-grid">
 
-        <!-- Resume upload (PDF only, silent parse) -->
+        <!-- Resume upload -->
         <div>
           <div class="field-label"><span class="dot"></span>Your Resume (PDF)</div>
           <label class="upload-zone" id="uploadZone" for="pdfFileInput">
@@ -82,15 +68,17 @@ Requirements:
         </div>
 
       </div>
-
-      <!-- Mode indicator -->
-      <div id="modeBar" class="mode-bar" style="display:none"></div>
     </div>
 
     <div class="btn-row">
-      <button id="optimizeBtn" class="btn btn-primary">
-        <span>⚡</span> Optimize My Resume
-      </button>
+      <div class="btn-col">
+        <button id="optimizeBtn" class="btn btn-primary">
+          <span>⚡</span> <span id="optimizeBtnLabel">Optimize My Resume — ₹20</span>
+        </button>
+        <div id="paymentNote" class="payment-note">
+          Each optimization costs ₹20 &nbsp;·&nbsp; Paid securely via Razorpay (UPI / cards / netbanking)
+        </div>
+      </div>
     </div>
   </section>
 
@@ -159,7 +147,7 @@ Requirements:
       </div>
     </div>
 
-    <!-- Resume preview (rendered HTML, not raw text) -->
+    <!-- Resume preview -->
     <div class="card mt-24">
       <div class="section-title" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div style="display:flex;align-items:center;gap:8px">
@@ -194,10 +182,35 @@ Requirements:
 
 </main>
 
+<!-- ── Footer ── -->
 <footer>
   Made by <strong>Darshan</strong> &nbsp;·&nbsp; Resume text never stored &nbsp;·&nbsp;
   <a href="https://github.com/nayakdarshan/ats-resume-optimizer" target="_blank" rel="noopener">GitHub</a>
+  <!-- Admin access icon — unobtrusive, for admin use only -->
+  <button id="adminIconBtn" class="admin-icon-btn" title="" aria-label="Settings">⚙</button>
 </footer>
+
+<!-- Admin panel — floating, hidden by default, revealed only by icon click -->
+<div id="adminPanel" class="admin-panel" style="display:none" role="dialog" aria-modal="true">
+  <!-- Login view -->
+  <div id="adminLoginView">
+    <div class="admin-panel-title">Access</div>
+    <div id="adminError" class="admin-error" style="display:none"></div>
+    <div class="admin-pw-row">
+      <input type="password" id="adminPwInput" class="admin-pw-input"
+             placeholder="Password…" autocomplete="off" />
+      <button id="adminSubmitBtn" class="admin-submit-btn">→</button>
+    </div>
+  </div>
+  <!-- Active view -->
+  <div id="adminActiveView" style="display:none">
+    <div class="admin-active-label">⚡ Admin Mode</div>
+    <button class="admin-exit-btn" onclick="exitAdminMode()">Exit</button>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toastMsg" class="toast-msg" style="display:none"></div>
 
 <script src="app.js"></script>
 </body>

@@ -2,15 +2,28 @@
  * ATS Resume Optimizer — Cloudflare Worker
  *
  * Required secrets (set via `wrangler secret put`):
- *   ANTHROPIC_API_KEY   — your Anthropic API key
- *   ACCESS_PASSWORD     — the invite-only password for the frontend gate
+ *   ANTHROPIC_API_KEY    — Anthropic API key
+ *   ACCESS_PASSWORD      — Admin-only bypass password (hidden icon in footer)
+ *   RAZORPAY_KEY_ID      — Razorpay publishable key  (e.g. rzp_live_xxx or rzp_test_xxx)
+ *   RAZORPAY_KEY_SECRET  — Razorpay secret key (NEVER in frontend)
  *
- * Endpoints (all POST, JSON body):
- *   { action: "ping",     password }                           → 200 {ok:true} | 401
- *   { action: "optimize", password, resumeText, jobDescription } → 200 {…} | 401 | 500
+ * Actions:
+ *   POST { action: "ping",         password }
+ *     → 200 { ok: true }  |  401
+ *
+ *   POST { action: "create-order" }
+ *     → 200 { orderId, amount, currency, keyId }  |  503
+ *
+ *   POST { action: "optimize", password, resumeText, jobDescription }
+ *     → Admin path: validates ACCESS_PASSWORD
+ *
+ *   POST { action: "optimize",
+ *          razorpay_order_id, razorpay_payment_id, razorpay_signature,
+ *          resumeText, jobDescription }
+ *     → Paid path: verifies HMAC-SHA256 signature before optimizing
  */
 
-// ── Shared scoring logic (mirrors app.js) ─────────────────────────────────────
+// ── Scoring helpers (mirrors app.js) ──────────────────────────────────────────
 const STOPWORDS = new Set([
   'a','about','above','after','again','against','all','am','an','and','any','are',
   'as','at','be','because','been','before','being','below','between','both','but','by',
@@ -74,9 +87,7 @@ function tokenize(text) {
   for (const phrase of TECH_PHRASES) {
     if (lower.includes(phrase)) found.add(phrase);
   }
-  const tokens = lower
-    .replace(/[^a-z0-9#+.\-/\s]/g, ' ')
-    .split(/\s+/)
+  const tokens = lower.replace(/[^a-z0-9#+.\-/\s]/g, ' ').split(/\s+/)
     .filter(t => t.length > 1 && !STOPWORDS.has(t));
   for (const t of tokens) found.add(t);
   return found;
@@ -88,107 +99,101 @@ function extractJDKeywords(jdText) {
   const found = new Set();
   for (const phrase of TECH_PHRASES) {
     if (lower.includes(phrase)) {
-      const count = (lower.match(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'g')) || []).length;
+      const count = (lower.match(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
       wordFreq[phrase] = (wordFreq[phrase] || 0) + count * 3;
       found.add(phrase);
     }
   }
-  const tokens = lower
-    .replace(/[^a-z0-9#+.\-/\s]/g, ' ')
-    .split(/\s+/)
+  const tokens = lower.replace(/[^a-z0-9#+.\-/\s]/g, ' ').split(/\s+/)
     .filter(t => t.length > 2 && !STOPWORDS.has(t));
-  for (const t of tokens) {
-    wordFreq[t] = (wordFreq[t] || 0) + 1;
-    found.add(t);
-  }
+  for (const t of tokens) { wordFreq[t] = (wordFreq[t] || 0) + 1; found.add(t); }
   return [...found].map(kw => ({
-    kw,
-    score: (wordFreq[kw] || 0) + (TECH_PHRASES.includes(kw) ? 5 : 0)
+    kw, score: (wordFreq[kw] || 0) + (TECH_PHRASES.includes(kw) ? 5 : 0)
   })).sort((a, b) => b.score - a.score);
 }
 
 function computeScore(jdKeywords, resumeTokens) {
   if (!jdKeywords.length) return 0;
   const top = jdKeywords.slice(0, 60);
-  const totalWeight = top.reduce((s, k) => s + k.score, 0);
+  const total = top.reduce((s, k) => s + k.score, 0);
   let matched = 0;
-  for (const k of top) {
-    if (resumeTokens.has(k.kw)) matched += k.score;
-  }
-  return Math.min(100, Math.round((matched / totalWeight) * 100));
+  for (const k of top) { if (resumeTokens.has(k.kw)) matched += k.score; }
+  return Math.min(100, Math.round((matched / total) * 100));
 }
 
-// Serialize structured resume JSON → plain text for scoring
 function resumeToScoringText(resume) {
-  const parts = [
-    resume.name,
-    resume.title,
-    resume.summary,
-    ...(resume.skills || []).flatMap(g => g.items),
+  return [
+    resume.name, resume.title, resume.summary,
+    ...(resume.skills     || []).flatMap(g => g.items),
     ...(resume.experience || []).flatMap(j => [j.company, j.title, ...(j.bullets || [])]),
-    ...(resume.projects  || []).flatMap(p => [p.name, ...(p.bullets  || [])]),
-    ...(resume.education || []).map(e => [e.degree, e.institution].join(' '))
-  ].filter(Boolean);
-  return parts.join('\n');
+    ...(resume.projects   || []).flatMap(p => [p.name, ...(p.bullets || [])]),
+    ...(resume.education  || []).map(e => [e.degree, e.institution].join(' '))
+  ].filter(Boolean).join('\n');
 }
 
-// ── Claude API — structured JSON output ───────────────────────────────────────
+// ── Razorpay helpers ──────────────────────────────────────────────────────────
+
+async function createRazorpayOrder(keyId, keySecret) {
+  const credentials = btoa(`${keyId}:${keySecret}`);
+  const res = await fetch('https://api.razorpay.com/v1/orders', {
+    method: 'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Basic ${credentials}`
+    },
+    body: JSON.stringify({
+      amount:   2000,                     // ₹20 in paise
+      currency: 'INR',
+      receipt:  `ats_${Date.now()}`
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.description || `Razorpay error ${res.status}`);
+  }
+  return res.json(); // { id, amount, currency, … }
+}
+
+// HMAC-SHA256 signature verification (Razorpay spec)
+// expected_signature = HMAC_SHA256(order_id + "|" + payment_id, key_secret)
+async function verifyRazorpaySignature(orderId, paymentId, signature, keySecret) {
+  const enc     = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', enc.encode(keySecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false, ['sign']
+  );
+  const sigBuf  = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(`${orderId}|${paymentId}`));
+  const computed = Array.from(new Uint8Array(sigBuf))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  return computed === signature;
+}
+
+// ── Claude API ────────────────────────────────────────────────────────────────
 async function callClaude(resumeText, jobDescription, apiKey) {
   const prompt = `You are an expert ATS resume optimizer and career coach.
 
 TASK: Analyze the candidate's resume against the job description, then return an ATS-optimized version as a single valid JSON object.
 
-CRITICAL RULES — read carefully:
-1. "company", "title", "dates", "location", "degree", "institution" MUST be copied character-for-character from the resume. Never rephrase, shorten, or prepend anything to these fields.
-2. "bullets" under each job/project are the ONLY content you rewrite. Format: strong past-tense action verb + what they did + technology + quantified impact if present in the original. Do NOT invent metrics.
-3. "summary": 2–3 sentences. Reference the target role title and mirror 3–5 JD keywords where honest.
-4. "skills": group into categories (e.g. Frontend, Backend, Cloud, Tools, Databases). Only include skills that actually appear in the candidate's resume. Do not invent skills.
+CRITICAL RULES:
+1. "company", "title", "dates", "location", "degree", "institution" MUST be copied character-for-character from the resume. Never rephrase or prepend anything.
+2. "bullets" under each job/project are the ONLY content you rewrite: strong past-tense action verb + what they did + technology + quantified impact if present. Do NOT invent metrics.
+3. "summary": 2–3 sentences referencing the target role and 3–5 JD keywords where honest.
+4. "skills": group by category (Frontend, Backend, Cloud, Tools, Databases). Only include skills that appear in the candidate's resume.
 5. Never fabricate any employer, date, institution, metric, or project.
-6. Return ONLY the raw JSON object — no markdown code fences, no \`\`\`json, no explanation, no preamble. Your entire response must be parseable by JSON.parse().
+6. Return ONLY the raw JSON object — no markdown fences, no explanation. Your entire response must be parseable by JSON.parse().
 
-OUTPUT SCHEMA (return exactly this shape — all fields required, use empty string or empty array if unknown):
+OUTPUT SCHEMA:
 {
-  "name": "Full Name",
-  "title": "Most recent job title from resume, or empty string",
-  "contact": {
-    "email": "email or empty string",
-    "phone": "phone or empty string",
-    "location": "City, Country or empty string",
-    "links": ["linkedin URL", "github URL"]
-  },
-  "summary": "2–3 sentence paragraph optimized for this JD",
-  "skills": [
-    { "category": "Frontend", "items": ["React", "Angular", "TypeScript"] },
-    { "category": "Backend",  "items": ["Node.js", "Spring Boot", "Python"] }
-  ],
-  "experience": [
-    {
-      "company": "EXACT company name from resume",
-      "title": "EXACT job title from resume",
-      "location": "location or empty string",
-      "dates": "EXACT date range from resume",
-      "bullets": [
-        "Developed REST APIs using Spring Boot and PostgreSQL, reducing response latency by 35%.",
-        "Automated CI/CD pipeline with GitHub Actions, cutting deployment time from 2 hours to 15 minutes."
-      ]
-    }
-  ],
-  "projects": [
-    {
-      "name": "Project Name",
-      "context": "Brief context or company or empty string",
-      "dates": "dates or empty string",
-      "bullets": ["Built...", "Integrated..."]
-    }
-  ],
-  "education": [
-    {
-      "degree": "EXACT degree name from resume",
-      "institution": "EXACT institution name from resume",
-      "dates": "EXACT dates from resume",
-      "location": "location or empty string"
-    }
-  ]
+  "name": "string",
+  "title": "string",
+  "contact": { "email": "string", "phone": "string", "location": "string", "links": ["string"] },
+  "summary": "string",
+  "skills": [ { "category": "string", "items": ["string"] } ],
+  "experience": [ { "company": "string", "title": "string", "location": "string", "dates": "string", "bullets": ["string"] } ],
+  "projects":   [ { "name": "string", "context": "string", "dates": "string", "bullets": ["string"] } ],
+  "education":  [ { "degree": "string", "institution": "string", "dates": "string", "location": "string" } ]
 }
 
 JOB DESCRIPTION:
@@ -197,46 +202,41 @@ ${jobDescription.slice(0, 2500)}
 CANDIDATE RESUME:
 ${resumeText.slice(0, 2500)}`;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
+      'Content-Type':    'application/json',
+      'x-api-key':       apiKey,
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model:      'claude-sonnet-4-6',
       max_tokens: 4000,
-      messages: [{ role: 'user', content: prompt }]
+      messages:   [{ role: 'user', content: prompt }]
     })
   });
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Anthropic API error ${response.status}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Anthropic error ${res.status}`);
   }
 
-  const data = await response.json();
-  const raw = data.content[0].text.trim();
-
-  // Strip any accidental markdown fences Claude might still emit
+  const data    = await res.json();
+  const raw     = data.content[0].text.trim();
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
-  let parsed;
   try {
-    parsed = JSON.parse(cleaned);
+    return JSON.parse(cleaned);
   } catch (e) {
-    throw new Error(`Claude returned invalid JSON: ${e.message}. Raw (first 200 chars): ${cleaned.slice(0, 200)}`);
+    throw new Error(`Claude returned invalid JSON: ${e.message}. Preview: ${cleaned.slice(0, 200)}`);
   }
-
-  return parsed;
 }
 
-// ── CORS helper ───────────────────────────────────────────────────────────────
+// ── CORS & response helpers ───────────────────────────────────────────────────
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type'
 };
 
 function jsonRes(body, status = 200) {
@@ -246,65 +246,110 @@ function jsonRes(body, status = 200) {
   });
 }
 
+// ── Action handlers ───────────────────────────────────────────────────────────
+
+function handlePing(body, env) {
+  const { password } = body;
+  if (!password || password !== env.ACCESS_PASSWORD) {
+    return jsonRes({ error: 'Invalid password' }, 401);
+  }
+  return jsonRes({ ok: true });
+}
+
+async function handleCreateOrder(env) {
+  if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET) {
+    return jsonRes({ error: 'Payment not configured on server' }, 503);
+  }
+  try {
+    const order = await createRazorpayOrder(env.RAZORPAY_KEY_ID, env.RAZORPAY_KEY_SECRET);
+    return jsonRes({
+      orderId:  order.id,
+      amount:   order.amount,
+      currency: order.currency,
+      keyId:    env.RAZORPAY_KEY_ID   // public key — safe to return
+    });
+  } catch (e) {
+    console.error('create-order error:', e);
+    return jsonRes({ error: 'Could not create payment order: ' + e.message }, 500);
+  }
+}
+
+async function handleOptimize(body, env) {
+  const { password, resumeText, jobDescription,
+          razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
+
+  if (!resumeText || !jobDescription) {
+    return jsonRes({ error: 'resumeText and jobDescription are required' }, 400);
+  }
+
+  // ── Authorization: admin password OR valid Razorpay payment ──
+  if (password) {
+    // Admin path
+    if (password !== env.ACCESS_PASSWORD) {
+      return jsonRes({ error: 'Invalid admin password' }, 401);
+    }
+  } else if (razorpay_order_id && razorpay_payment_id && razorpay_signature) {
+    // Paid path — verify signature server-side
+    if (!env.RAZORPAY_KEY_SECRET) {
+      return jsonRes({ error: 'Payment verification not configured' }, 503);
+    }
+    const valid = await verifyRazorpaySignature(
+      razorpay_order_id, razorpay_payment_id, razorpay_signature,
+      env.RAZORPAY_KEY_SECRET
+    );
+    if (!valid) {
+      return jsonRes({ error: 'Payment signature verification failed. Contact support if you were charged.' }, 402);
+    }
+  } else {
+    return jsonRes({ error: 'Authorization required: provide admin password or valid payment data.' }, 401);
+  }
+
+  // ── Run optimization ──
+  try {
+    const jdKeywords    = extractJDKeywords(jobDescription);
+    const resumeTokens  = tokenize(resumeText);
+    const beforeScore   = computeScore(jdKeywords, resumeTokens);
+
+    const resume = await callClaude(resumeText, jobDescription, env.ANTHROPIC_API_KEY);
+
+    const optimizedText   = resumeToScoringText(resume);
+    const optimizedTokens = tokenize(optimizedText);
+    const afterScore      = computeScore(jdKeywords, optimizedTokens);
+
+    const missingKeywords = jdKeywords
+      .filter(k => !resumeTokens.has(k.kw) && optimizedTokens.has(k.kw))
+      .slice(0, 25)
+      .map(k => k.kw);
+
+    return jsonRes({ beforeScore, afterScore, missingKeywords, resume });
+
+  } catch (e) {
+    console.error('Optimization error:', e);
+    return jsonRes({ error: e.message || 'Optimization failed' }, 500);
+  }
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS });
     }
-
     if (request.method !== 'POST') {
       return jsonRes({ error: 'Method not allowed' }, 405);
     }
 
     let body;
-    try {
-      body = await request.json();
-    } catch {
-      return jsonRes({ error: 'Invalid JSON body' }, 400);
-    }
+    try { body = await request.json(); }
+    catch { return jsonRes({ error: 'Invalid JSON body' }, 400); }
 
-    const { action = 'optimize', password, resumeText, jobDescription } = body;
+    const { action = 'optimize' } = body;
 
-    if (!password || password !== env.ACCESS_PASSWORD) {
-      return jsonRes({ error: 'Invalid or missing password' }, 401);
-    }
-
-    if (action === 'ping') {
-      return jsonRes({ ok: true });
-    }
-
-    if (action !== 'optimize') {
-      return jsonRes({ error: 'Unknown action' }, 400);
-    }
-
-    if (!resumeText || !jobDescription) {
-      return jsonRes({ error: 'resumeText and jobDescription are required' }, 400);
-    }
-
-    try {
-      const jdKeywords   = extractJDKeywords(jobDescription);
-      const resumeTokens = tokenize(resumeText);
-      const beforeScore  = computeScore(jdKeywords, resumeTokens);
-
-      // AI rewrite → structured JSON
-      const resume = await callClaude(resumeText, jobDescription, env.ANTHROPIC_API_KEY);
-
-      // Score against serialised text of the structured resume
-      const optimizedText   = resumeToScoringText(resume);
-      const optimizedTokens = tokenize(optimizedText);
-      const afterScore      = computeScore(jdKeywords, optimizedTokens);
-
-      const missingKeywords = jdKeywords
-        .filter(k => !resumeTokens.has(k.kw) && optimizedTokens.has(k.kw))
-        .slice(0, 25)
-        .map(k => k.kw);
-
-      return jsonRes({ beforeScore, afterScore, missingKeywords, resume });
-
-    } catch (e) {
-      console.error('Worker error:', e);
-      return jsonRes({ error: e.message || 'Internal server error' }, 500);
+    switch (action) {
+      case 'ping':         return handlePing(body, env);
+      case 'create-order': return handleCreateOrder(env);
+      case 'optimize':     return handleOptimize(body, env);
+      default:             return jsonRes({ error: `Unknown action: ${action}` }, 400);
     }
   }
 };
