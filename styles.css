@@ -166,6 +166,20 @@ textarea:focus {
   margin-top: 8px;
 }
 
+.btn-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Payment note ── */
+.payment-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -412,92 +426,117 @@ tbody td:first-child { color: var(--text-primary); font-weight: 500; }
 .badge.no { background: var(--danger-bg); color: var(--danger); }
 .badge.added { background: var(--accent-glow); color: #8fa4ff; }
 
-/* ── Resume Preview ── */
-.resume-preview {
+/* ── Resume HTML Preview ── */
+.resume-preview-html {
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 24px;
-  font-family: 'Georgia', serif;
-  font-size: 14px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-primary);
-  max-height: 600px;
+  padding: 28px 32px;
+  max-height: 680px;
   overflow-y: auto;
-}
-
-.resume-preview::-webkit-scrollbar { width: 6px; }
-.resume-preview::-webkit-scrollbar-track { background: transparent; }
-.resume-preview::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-/* ── AI Section ── */
-.ai-section {
-  margin-top: 20px;
-}
-
-.ai-toggle {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 500;
-  user-select: none;
-  padding: 12px 0;
-}
-
-.ai-toggle:hover { color: var(--text-primary); }
-
-.ai-toggle .arrow {
-  transition: transform 0.2s;
-  font-size: 12px;
-}
-
-.ai-toggle.open .arrow { transform: rotate(90deg); }
-
-.ai-body {
-  display: none;
-  padding: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  margin-top: 4px;
-}
-
-.ai-note {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-bottom: 14px;
-  line-height: 1.6;
-}
-
-.ai-note strong { color: var(--success); }
-
-.ai-input-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.ai-key-input {
-  flex: 1;
-  min-width: 200px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
   font-family: var(--font);
-  font-size: 14px;
-  padding: 10px 14px;
-  outline: none;
-  transition: border-color 0.2s;
 }
 
-.ai-key-input:focus { border-color: var(--border-focus); }
-.ai-key-input::placeholder { color: var(--text-muted); }
+.resume-preview-html::-webkit-scrollbar { width: 6px; }
+.resume-preview-html::-webkit-scrollbar-track { background: transparent; }
+.resume-preview-html::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Name + header */
+.rp-name {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  margin-bottom: 3px;
+}
+.rp-jobtitle {
+  font-size: 13px;
+  color: #8fa4ff;
+  margin-bottom: 6px;
+}
+.rp-contact {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+/* Section block */
+.rp-section { margin-top: 18px; }
+.rp-heading {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.rp-rule {
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.35;
+  margin-bottom: 10px;
+}
+
+/* Summary */
+.rp-para {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.75;
+  margin: 0;
+}
+
+/* Skills */
+.rp-skill-line {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin-bottom: 1px;
+}
+.rp-skill-cat {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Entry header: company left, dates right */
+.rp-entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 12px;
+}
+.rp-company {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+}
+.rp-dates {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Job title / institution subtitle */
+.rp-entry-title {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-top: 1px;
+  margin-bottom: 5px;
+}
+
+/* Bullets */
+.rp-bullet {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+  padding-left: 14px;
+  text-indent: -14px;
+  margin-bottom: 3px;
+}
 
 /* ── Error ── */
 .error-box {
@@ -537,102 +576,6 @@ footer a {
 }
 
 .fade-in { animation: fadeIn 0.4s ease forwards; }
-
-/* ── Password Gate ── */
-.gate-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 11, 18, 0.92);
-  backdrop-filter: blur(8px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-}
-
-.gate-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 40px 32px;
-  max-width: 400px;
-  width: 100%;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
-  text-align: center;
-}
-
-.gate-lock {
-  font-size: 40px;
-  margin-bottom: 16px;
-}
-
-.gate-title {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  margin-bottom: 10px;
-}
-
-.gate-desc {
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.6;
-  margin-bottom: 24px;
-}
-
-.gate-error {
-  background: var(--danger-bg);
-  border: 1px solid rgba(239,68,68,0.3);
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  color: #fca5a5;
-  font-size: 13px;
-  margin-bottom: 14px;
-  text-align: left;
-}
-
-.gate-input {
-  width: 100%;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: var(--font);
-  font-size: 15px;
-  padding: 12px 16px;
-  outline: none;
-  text-align: center;
-  letter-spacing: 0.05em;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  margin-bottom: 12px;
-}
-
-.gate-input:focus {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
-.gate-btn {
-  width: 100%;
-  justify-content: center;
-}
-
-.gate-contact {
-  margin-top: 20px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.gate-spinner {
-  width: 18px; height: 18px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  display: inline-block;
-  vertical-align: middle;
-}
 
 /* ── Upload Zone ── */
 .upload-zone {
@@ -695,28 +638,6 @@ footer a {
 .upload-success { color: var(--success); background: var(--success-bg); }
 .upload-error   { color: var(--danger);  background: var(--danger-bg);  }
 
-.paste-divider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-muted);
-  font-size: 12px;
-  margin: 8px 0;
-}
-.paste-divider::before,
-.paste-divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
-.parsed-note {
-  font-size: 12px;
-  color: var(--success);
-  margin-top: 6px;
-}
-
 /* ── Mode Bar ── */
 .mode-bar {
   margin-top: 16px;
@@ -736,4 +657,137 @@ footer a {
   background: var(--warning-bg);
   border: 1px solid rgba(245,158,11,0.2);
   color: var(--warning);
+}
+
+/* ── Footer admin icon ── */
+footer {
+  position: relative;
+}
+
+.admin-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0.18;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  margin-left: 8px;
+  transition: opacity 0.2s;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.admin-icon-btn:hover { opacity: 0.55; }
+
+.admin-icon-btn.admin-icon-active {
+  opacity: 0.9;
+  color: var(--accent);
+}
+
+/* ── Admin floating panel ── */
+.admin-panel {
+  position: fixed;
+  bottom: 64px;
+  right: 16px;
+  z-index: 600;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  min-width: 220px;
+  animation: fadeIn 0.15s ease;
+}
+
+.admin-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.admin-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
+.admin-pw-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-pw-input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.admin-pw-input:focus { border-color: var(--border-focus); }
+.admin-pw-input::placeholder { color: var(--text-muted); }
+
+.admin-submit-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 15px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.admin-submit-btn:hover { background: var(--accent-hover); }
+.admin-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Admin active view */
+.admin-active-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.admin-exit-btn {
+  font-size: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.admin-exit-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── Toast notification ── */
+.toast-msg {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 20px;
+  border-radius: 20px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  z-index: 700;
+  transition: opacity 0.5s;
+  white-space: nowrap;
 }

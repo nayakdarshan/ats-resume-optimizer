@@ -4,168 +4,110 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ATS Resume Optimizer — Beat the Bots, Land the Job</title>
-  <meta name="description" content="ATS resume optimizer. Upload or paste your resume + job description, get a keyword-optimized resume with score. Password-protected, invite-only." />
+  <meta name="description" content="AI-powered ATS resume optimizer. Upload your resume PDF + job description, get a keyword-optimized resume with score. ₹20 per use." />
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 
-  <!-- pdf.js for PDF parsing -->
+  <!-- pdf.js — client-side PDF text extraction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
-  <!-- jsPDF for PDF export -->
+  <!-- jsPDF — real selectable-text PDF export -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <!-- Razorpay Checkout — payment modal -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
-<!-- ── Password Gate Overlay ── -->
-<div id="passwordGate" class="gate-overlay" style="display:none">
-  <div class="gate-card fade-in">
-    <div class="gate-lock">🔒</div>
-    <h2 class="gate-title">Invite Only</h2>
-    <p class="gate-desc">This tool is available to invited users.<br>Enter your access password to continue.</p>
-    <div id="gateError" class="gate-error" style="display:none"></div>
-    <input
-      type="password"
-      id="gatePasswordInput"
-      class="gate-input"
-      placeholder="Enter access password…"
-      autocomplete="current-password"
-    />
-    <button id="gateSubmitBtn" class="btn btn-primary gate-btn">
-      <span id="gateBtnText">Enter →</span>
-      <span id="gateBtnSpinner" class="gate-spinner" style="display:none"></span>
-    </button>
-    <p class="gate-contact">
-      Don't have access? Contact <strong>Darshan</strong> for an invite.
-    </p>
-  </div>
-</div>
-
 <header>
-  <div class="header-badge" id="headerBadge">Invite-Only · AI-Powered · No Data Stored</div>
+  <div class="header-badge" id="headerBadge">AI-Powered · Secure Payment · No Data Stored</div>
   <h1>ATS Resume Optimizer</h1>
   <p>Beat applicant tracking systems. Get more interviews.</p>
 </header>
 
 <main>
 
-  <!-- ── Error Box ── -->
   <div id="errorBox" class="error-box"></div>
 
-  <!-- ── Input Section ── -->
+  <!-- ── Input ── -->
   <section id="inputSection">
-
     <div class="card">
       <div class="input-grid">
 
-        <!-- Resume column -->
+        <!-- Resume upload -->
         <div>
-          <div class="field-label"><span class="dot"></span>Your Current Resume</div>
-
-          <!-- PDF Upload zone -->
+          <div class="field-label"><span class="dot"></span>Your Resume (PDF)</div>
           <label class="upload-zone" id="uploadZone" for="pdfFileInput">
             <input type="file" id="pdfFileInput" accept=".pdf" style="display:none" />
             <div class="upload-icon-wrap">📄</div>
             <div class="upload-main">Upload PDF <span class="upload-or">or drag &amp; drop</span></div>
-            <div class="upload-sub">Parsed in your browser · never sent to a server</div>
+            <div class="upload-sub">Parsed in your browser · text never leaves your device</div>
           </label>
-
           <div id="uploadStatus" class="upload-status" style="display:none"></div>
-
-          <div class="paste-divider"><span>or paste text below</span></div>
-
-          <textarea
-            id="resumeInput"
-            placeholder="Paste your resume here (any format, plain text ideal).
-
-Example:
-Jane Doe
-jane@email.com | 555-123-4567 | linkedin.com/in/janedoe
-
-EXPERIENCE
-Software Engineer — Acme Corp (2021–Present)
-• Built microservices using Node.js and Docker
-• Led a team of 4 engineers improving CI/CD pipeline
-
-EDUCATION
-B.S. Computer Science, State University, 2020
-
-SKILLS
-JavaScript, React, Node.js, SQL, Docker, AWS"
-          ></textarea>
-
-          <div id="parsedNote" class="parsed-note" style="display:none">
-            ✓ PDF text extracted — review and edit above before optimizing
-          </div>
         </div>
 
-        <!-- Job Description column -->
+        <!-- Job Description -->
         <div>
           <div class="field-label"><span class="dot" style="background:#22c55e"></span>Job Description</div>
-          <textarea
-            id="jdInput"
-            placeholder="Paste the full job description here — including title, requirements, and responsibilities.
+          <textarea id="jdInput" placeholder="Paste the full job description here — including title, requirements, and responsibilities.
 
 Example:
 Senior Software Engineer — Cloud Platform
 
-We are looking for a Senior Software Engineer to join our Cloud Platform team. You will design and build scalable microservices, collaborate cross-functionally, and drive technical decisions.
-
 Requirements:
-• 3+ years of experience with Node.js or Python
+• 3+ years of experience with Node.js or Java / Spring Boot
 • Experience with AWS (EC2, S3, Lambda)
-• Strong knowledge of Docker and Kubernetes
-• Familiarity with CI/CD pipelines..."
-          ></textarea>
+• Docker and Kubernetes
+• CI/CD with GitHub Actions
+• Angular or React frontend experience"></textarea>
         </div>
-      </div>
 
-      <!-- Mode indicator -->
-      <div id="modeBar" class="mode-bar" style="display:none"></div>
+      </div>
     </div>
 
     <div class="btn-row">
-      <button id="optimizeBtn" class="btn btn-primary">
-        <span>⚡</span> Optimize My Resume
-      </button>
+      <div class="btn-col">
+        <button id="optimizeBtn" class="btn btn-primary">
+          <span>⚡</span> <span id="optimizeBtnLabel">Optimize My Resume — ₹20</span>
+        </button>
+        <div id="paymentNote" class="payment-note">
+          Each optimization costs ₹20 &nbsp;·&nbsp; Paid securely via Razorpay (UPI / cards / netbanking)
+        </div>
+      </div>
     </div>
-
   </section>
 
-  <!-- ── Loading Section ── -->
-  <section id="loadingSection" style="display:none;">
-    <div class="card" style="text-align:center;padding:48px 24px;">
+  <!-- ── Loading ── -->
+  <section id="loadingSection" style="display:none">
+    <div class="card" style="text-align:center;padding:48px 24px">
       <div class="spinner"></div>
       <div class="loading-text" id="loadingText">Analyzing your resume against the job description…</div>
       <div class="loading-steps">
         <div class="step-item" data-step="0">1. Parsing job description keywords</div>
         <div class="step-item" data-step="1">2. Computing baseline ATS score</div>
-        <div class="step-item" data-step="2">3. Rewriting &amp; optimizing resume</div>
-        <div class="step-item" data-step="3">4. Scoring optimized resume</div>
-        <div class="step-item" data-step="4">5. Building keyword gap analysis</div>
+        <div class="step-item" data-step="2">3. AI rewriting &amp; optimizing resume</div>
+        <div class="step-item" data-step="3">4. Building keyword gap analysis</div>
+        <div class="step-item" data-step="4">5. Rendering results</div>
       </div>
     </div>
   </section>
 
-  <!-- ── Results Section ── -->
-  <section id="resultsSection" style="display:none;">
+  <!-- ── Results ── -->
+  <section id="resultsSection" style="display:none">
 
     <div class="results-header">
       <h2>
         Optimization Results
         <span id="aiTag" style="display:none;font-size:12px;font-weight:600;color:#8fa4ff;background:var(--accent-glow);border:1px solid rgba(79,110,247,0.3);padding:2px 10px;border-radius:20px;margin-left:8px;vertical-align:middle;">AI Enhanced</span>
       </h2>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button id="resetBtn" class="btn btn-secondary" style="padding:10px 18px;font-size:13px;">
-          ↩ Start Over
-        </button>
-        <button id="downloadBtn" class="btn btn-success" style="padding:10px 20px;font-size:13px;">
-          <span>⬇</span> Download PDF
-        </button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button id="resetBtn" class="btn btn-secondary" style="padding:10px 18px;font-size:13px">↩ Start Over</button>
+        <button id="downloadBtn" class="btn btn-success" style="padding:10px 20px;font-size:13px"><span>⬇</span> Download PDF</button>
       </div>
     </div>
 
@@ -174,17 +116,13 @@ Requirements:
       <div class="score-card before card">
         <div class="score-label">⚠ ATS Score — Before</div>
         <div class="score-value" id="scoreBefore">0</div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="barBefore" style="width:0%"></div>
-        </div>
-        <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">Original resume match</div>
+        <div class="progress-bar"><div class="progress-fill" id="barBefore" style="width:0%"></div></div>
+        <div style="margin-top:8px;font-size:12px;color:var(--text-muted)">Original resume match</div>
       </div>
       <div class="score-card after card">
         <div class="score-label">✓ ATS Score — After</div>
         <div class="score-value" id="scoreAfter">0</div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="barAfter" style="width:0%"></div>
-        </div>
+        <div class="progress-bar"><div class="progress-fill" id="barAfter" style="width:0%"></div></div>
         <div class="score-change" id="scoreDelta"></div>
       </div>
     </div>
@@ -211,33 +149,32 @@ Requirements:
 
     <!-- Resume preview -->
     <div class="card mt-24">
-      <div class="section-title" style="justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <div style="display:flex;align-items:center;gap:8px;">
+      <div class="section-title" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px">
           <span class="icon">📄</span>
-          ATS-Optimized Resume Preview
+          Optimized Resume Preview
         </div>
-        <span style="font-size:12px;color:var(--text-muted);font-weight:400;">Single-column · Selectable text · ATS-parseable</span>
+        <span style="font-size:12px;color:var(--text-muted);font-weight:400">Single-column · ATS-parseable · Selectable PDF</span>
       </div>
-      <pre id="resumePreview" class="resume-preview"></pre>
-      <div style="margin-top:16px;text-align:center;">
-        <button class="btn btn-success" onclick="downloadPDF()">
+      <div id="resumePreview" class="resume-preview-html"></div>
+      <div style="margin-top:16px;text-align:center">
+        <button id="downloadBtn2" class="btn btn-success" onclick="downloadPDF()">
           <span>⬇</span> Download PDF
         </button>
       </div>
     </div>
 
     <!-- Tips -->
-    <div class="card mt-24" style="background:var(--accent-glow);border-color:rgba(79,110,247,0.2);">
-      <div class="section-title" style="color:#8fa4ff;">
-        <span class="icon" style="background:rgba(143,164,255,0.15);">💡</span>
-        Pro Tips to Maximize Your Score
+    <div class="card mt-24" style="background:var(--accent-glow);border-color:rgba(79,110,247,0.2)">
+      <div class="section-title" style="color:#8fa4ff">
+        <span class="icon" style="background:rgba(143,164,255,0.15)">💡</span>
+        Pro Tips
       </div>
-      <ul style="color:var(--text-secondary);font-size:14px;line-height:1.9;padding-left:4px;list-style:none;">
-        <li>• <strong style="color:var(--text-primary);">Use exact keyword matches</strong> — ATS systems look for exact phrases from the JD, not synonyms.</li>
-        <li>• <strong style="color:var(--text-primary);">Quantify impact</strong> — Add metrics like "reduced latency by 40%" wherever possible.</li>
-        <li>• <strong style="color:var(--text-primary);">Standard section headings</strong> — Use EXPERIENCE, EDUCATION, SKILLS exactly as shown.</li>
-        <li>• <strong style="color:var(--text-primary);">No tables or columns in your final PDF</strong> — This tool generates a clean single-column PDF that every ATS can parse.</li>
-        <li>• <strong style="color:var(--text-primary);">Tailor per application</strong> — Run this tool for each role you apply to for best results.</li>
+      <ul style="color:var(--text-secondary);font-size:14px;line-height:1.9;padding-left:4px;list-style:none">
+        <li>• <strong style="color:var(--text-primary)">Exact keyword matches</strong> — ATS looks for exact phrases from the JD, not synonyms.</li>
+        <li>• <strong style="color:var(--text-primary)">Quantify impact</strong> — "reduced latency by 40%" beats "improved performance".</li>
+        <li>• <strong style="color:var(--text-primary)">Standard section headings</strong> — EXPERIENCE, EDUCATION, SKILLS as shown in the PDF.</li>
+        <li>• <strong style="color:var(--text-primary)">Tailor per application</strong> — run this tool fresh for each role you apply to.</li>
       </ul>
     </div>
 
@@ -245,10 +182,35 @@ Requirements:
 
 </main>
 
+<!-- ── Footer ── -->
 <footer>
-  Made by <strong>Darshan</strong> &nbsp;·&nbsp; No resume data stored &nbsp;·&nbsp;
+  Made by <strong>Darshan</strong> &nbsp;·&nbsp; Resume text never stored &nbsp;·&nbsp;
   <a href="https://github.com/nayakdarshan/ats-resume-optimizer" target="_blank" rel="noopener">GitHub</a>
+  <!-- Admin access icon — unobtrusive, for admin use only -->
+  <button id="adminIconBtn" class="admin-icon-btn" title="" aria-label="Settings">⚙</button>
 </footer>
+
+<!-- Admin panel — floating, hidden by default, revealed only by icon click -->
+<div id="adminPanel" class="admin-panel" style="display:none" role="dialog" aria-modal="true">
+  <!-- Login view -->
+  <div id="adminLoginView">
+    <div class="admin-panel-title">Access</div>
+    <div id="adminError" class="admin-error" style="display:none"></div>
+    <div class="admin-pw-row">
+      <input type="password" id="adminPwInput" class="admin-pw-input"
+             placeholder="Password…" autocomplete="off" />
+      <button id="adminSubmitBtn" class="admin-submit-btn">→</button>
+    </div>
+  </div>
+  <!-- Active view -->
+  <div id="adminActiveView" style="display:none">
+    <div class="admin-active-label">⚡ Admin Mode</div>
+    <button class="admin-exit-btn" onclick="exitAdminMode()">Exit</button>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toastMsg" class="toast-msg" style="display:none"></div>
 
 <script src="app.js"></script>
 </body>
