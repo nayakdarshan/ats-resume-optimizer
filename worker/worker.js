@@ -118,31 +118,84 @@ function computeScore(jdKeywords, resumeTokens) {
   return Math.min(100, Math.round((matched / totalWeight) * 100));
 }
 
-// ── Claude API call ───────────────────────────────────────────────────────────
+// Serialize structured resume JSON → plain text for scoring
+function resumeToScoringText(resume) {
+  const parts = [
+    resume.name,
+    resume.title,
+    resume.summary,
+    ...(resume.skills || []).flatMap(g => g.items),
+    ...(resume.experience || []).flatMap(j => [j.company, j.title, ...(j.bullets || [])]),
+    ...(resume.projects  || []).flatMap(p => [p.name, ...(p.bullets  || [])]),
+    ...(resume.education || []).map(e => [e.degree, e.institution].join(' '))
+  ].filter(Boolean);
+  return parts.join('\n');
+}
+
+// ── Claude API — structured JSON output ───────────────────────────────────────
 async function callClaude(resumeText, jobDescription, apiKey) {
   const prompt = `You are an expert ATS resume optimizer and career coach.
 
-TASK: Rewrite the resume below to maximize ATS keyword match for the given job description.
+TASK: Analyze the candidate's resume against the job description, then return an ATS-optimized version as a single valid JSON object.
 
-RULES — follow strictly:
-1. NEVER fabricate employers, job titles, dates, projects, metrics, or any experience.
-2. Restructure into these sections in exactly this order: SUMMARY, SKILLS, EXPERIENCE, PROJECTS (if any), EDUCATION.
-3. Each section header must be ALL CAPS on its own line, followed immediately by a line of 60 ─ characters.
-4. Rewrite bullets as: action verb + what you did + technology used + quantified impact (if present in original).
-5. Mirror the job description's exact keywords and phrasing where honest.
-6. Skills section: a single line of skills separated by " | ", merging user's existing skills with JD keywords that genuinely apply.
-7. Summary: 2-3 sentences, reference the target role and 3-5 top JD keywords.
-8. Plain text only — no markdown, no asterisks, no tables, no columns. Use • for bullets.
-9. Start with the candidate's full name on line 1, contact info on line 2.
-10. For skills the user does NOT have, list them in an "UPSKILLING TARGETS" section at the very end (not in the skills line).
+CRITICAL RULES — read carefully:
+1. "company", "title", "dates", "location", "degree", "institution" MUST be copied character-for-character from the resume. Never rephrase, shorten, or prepend anything to these fields.
+2. "bullets" under each job/project are the ONLY content you rewrite. Format: strong past-tense action verb + what they did + technology + quantified impact if present in the original. Do NOT invent metrics.
+3. "summary": 2–3 sentences. Reference the target role title and mirror 3–5 JD keywords where honest.
+4. "skills": group into categories (e.g. Frontend, Backend, Cloud, Tools, Databases). Only include skills that actually appear in the candidate's resume. Do not invent skills.
+5. Never fabricate any employer, date, institution, metric, or project.
+6. Return ONLY the raw JSON object — no markdown code fences, no \`\`\`json, no explanation, no preamble. Your entire response must be parseable by JSON.parse().
+
+OUTPUT SCHEMA (return exactly this shape — all fields required, use empty string or empty array if unknown):
+{
+  "name": "Full Name",
+  "title": "Most recent job title from resume, or empty string",
+  "contact": {
+    "email": "email or empty string",
+    "phone": "phone or empty string",
+    "location": "City, Country or empty string",
+    "links": ["linkedin URL", "github URL"]
+  },
+  "summary": "2–3 sentence paragraph optimized for this JD",
+  "skills": [
+    { "category": "Frontend", "items": ["React", "Angular", "TypeScript"] },
+    { "category": "Backend",  "items": ["Node.js", "Spring Boot", "Python"] }
+  ],
+  "experience": [
+    {
+      "company": "EXACT company name from resume",
+      "title": "EXACT job title from resume",
+      "location": "location or empty string",
+      "dates": "EXACT date range from resume",
+      "bullets": [
+        "Developed REST APIs using Spring Boot and PostgreSQL, reducing response latency by 35%.",
+        "Automated CI/CD pipeline with GitHub Actions, cutting deployment time from 2 hours to 15 minutes."
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "Project Name",
+      "context": "Brief context or company or empty string",
+      "dates": "dates or empty string",
+      "bullets": ["Built...", "Integrated..."]
+    }
+  ],
+  "education": [
+    {
+      "degree": "EXACT degree name from resume",
+      "institution": "EXACT institution name from resume",
+      "dates": "EXACT dates from resume",
+      "location": "location or empty string"
+    }
+  ]
+}
 
 JOB DESCRIPTION:
-${jobDescription.slice(0, 3000)}
+${jobDescription.slice(0, 2500)}
 
-RESUME TO REWRITE:
-${resumeText.slice(0, 3000)}
-
-OUTPUT: The complete rewritten resume in plain text only. No preamble, no explanation, no markdown.`;
+CANDIDATE RESUME:
+${resumeText.slice(0, 2500)}`;
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -164,7 +217,19 @@ OUTPUT: The complete rewritten resume in plain text only. No preamble, no explan
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  const raw = data.content[0].text.trim();
+
+  // Strip any accidental markdown fences Claude might still emit
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error(`Claude returned invalid JSON: ${e.message}. Raw (first 200 chars): ${cleaned.slice(0, 200)}`);
+  }
+
+  return parsed;
 }
 
 // ── CORS helper ───────────────────────────────────────────────────────────────
@@ -184,7 +249,6 @@ function jsonRes(body, status = 200) {
 // ── Main handler ──────────────────────────────────────────────────────────────
 export default {
   async fetch(request, env) {
-    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS });
     }
@@ -202,17 +266,14 @@ export default {
 
     const { action = 'optimize', password, resumeText, jobDescription } = body;
 
-    // ── Password check (applies to all actions) ──
     if (!password || password !== env.ACCESS_PASSWORD) {
       return jsonRes({ error: 'Invalid or missing password' }, 401);
     }
 
-    // ── Ping: just validate password ──
     if (action === 'ping') {
       return jsonRes({ ok: true });
     }
 
-    // ── Optimize ──
     if (action !== 'optimize') {
       return jsonRes({ error: 'Unknown action' }, 400);
     }
@@ -222,25 +283,24 @@ export default {
     }
 
     try {
-      // Score before
-      const jdKeywords = extractJDKeywords(jobDescription);
+      const jdKeywords   = extractJDKeywords(jobDescription);
       const resumeTokens = tokenize(resumeText);
-      const beforeScore = computeScore(jdKeywords, resumeTokens);
+      const beforeScore  = computeScore(jdKeywords, resumeTokens);
 
-      // AI rewrite
-      const optimizedResume = await callClaude(resumeText, jobDescription, env.ANTHROPIC_API_KEY);
+      // AI rewrite → structured JSON
+      const resume = await callClaude(resumeText, jobDescription, env.ANTHROPIC_API_KEY);
 
-      // Score after
-      const optimizedTokens = tokenize(optimizedResume);
-      const afterScore = computeScore(jdKeywords, optimizedTokens);
+      // Score against serialised text of the structured resume
+      const optimizedText   = resumeToScoringText(resume);
+      const optimizedTokens = tokenize(optimizedText);
+      const afterScore      = computeScore(jdKeywords, optimizedTokens);
 
-      // Keywords added by the rewrite
       const missingKeywords = jdKeywords
         .filter(k => !resumeTokens.has(k.kw) && optimizedTokens.has(k.kw))
         .slice(0, 25)
         .map(k => k.kw);
 
-      return jsonRes({ beforeScore, afterScore, missingKeywords, optimizedResume });
+      return jsonRes({ beforeScore, afterScore, missingKeywords, resume });
 
     } catch (e) {
       console.error('Worker error:', e);
