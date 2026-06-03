@@ -8,118 +8,197 @@ let _parsedResumeText = null;   // PDF text extracted by pdf.js
 let _isAdminMode      = false;  // true after valid admin password
 let _adminPassword    = null;   // held in memory only
 
-// ── Keyword scoring (client-side gap table + before-score) ────────────────────
-const STOPWORDS = new Set([
-  'a','about','above','after','again','against','all','am','an','and','any','are',
-  'as','at','be','because','been','before','being','below','between','both','but','by',
-  'can','did','do','does','doing','don','down','during','each','few','for','from',
-  'further','get','got','had','has','have','having','he','her','here','hers','herself',
-  'him','himself','his','how','i','if','in','into','is','it','its','itself','just',
-  'me','more','most','my','myself','no','nor','not','now','of','off','on','once',
-  'only','or','other','our','ours','ourselves','out','over','own','re','same','she',
-  'should','so','some','such','than','that','the','their','them','themselves','then',
-  'there','these','they','this','those','through','to','too','under','until','up',
-  'us','very','was','we','were','what','when','where','which','while','who','whom',
-  'why','will','with','you','your','yours','yourself','yourselves','would','could',
-  'may','might','must','shall','need','dare','ought','used','s','t','ve','re','d',
-  'll','m','o','y','ain','aren','couldn','didn','doesn','hadn','hasn','haven',
-  'isn','ma','mightn','mustn','needn','shan','shouldn','wasn','weren','won','wouldn',
-  'including','experience','years','year','also','etc','strong','good','excellent',
-  'work','working','ability','skills','knowledge','understanding','using','use','used',
-  'across','within','multiple','key','well','new','high','level','different','various',
-  'make','team','teams','ensure','provide','support','responsible','responsibilities',
-  'role','position','candidate','looking','seeking','job','opportunity','company',
-  'apply','application','required','requirement','requirements','preferred','minimum',
-  'plus','bonus','ideally','nice','will','must','able','help','drive','lead',
-  'build','develop','manage','create','contribute','collaborate','communicate','work'
-]);
+// ── Keyword scoring (synonym-aware) ───────────────────────────────────────────
+// Mirrors worker/worker.js — same vocab/synonyms so worker & frontend agree.
 
 const TECH_PHRASES = [
-  'machine learning','deep learning','natural language processing','computer vision',
-  'data science','data engineering','data analysis','data visualization','business intelligence',
-  'software engineering','software development','full stack','full-stack','front end','back end',
-  'frontend','backend','web development','mobile development','cloud computing',
-  'devops','mlops','dataops','ci/cd','continuous integration','continuous deployment',
-  'restful api','rest api','graphql api','api design','microservices','monolithic',
-  'containerization','infrastructure as code','agile methodology','scrum','kanban',
-  'test driven development','tdd','behavior driven development','bdd',
-  'object oriented','functional programming','system design','distributed systems',
-  'large language model','llm','generative ai','gen ai','reinforcement learning',
-  'neural network','transformer','attention mechanism','fine tuning','prompt engineering',
-  'vector database','knowledge graph','rag','retrieval augmented generation',
-  'a/b testing','statistical analysis','hypothesis testing','regression analysis',
-  'time series','feature engineering','model deployment','model evaluation',
-  'power bi','tableau','google analytics','adobe analytics','looker','metabase',
-  'apache spark','apache kafka','apache airflow','apache flink','hadoop',
+  'single-page application','single page application','single-page applications','single page applications','spa',
+  'progressive web app','progressive web apps','pwa',
+  'server-side rendering','server side rendering','ssr',
+  'client-side rendering','client side rendering','csr',
+  'static site generation','ssg','jamstack',
+  'web components','custom elements','shadow dom',
+  'design system','design systems','component library',
+  'component-driven','component driven','component-based','component based','component-driven architecture',
+  'micro-frontend','micro frontend','microfrontend','micro-frontends','micro frontends','module federation',
+  'state management','app state','application state',
+  'responsive design','responsive web','mobile-responsive','mobile first','mobile-first',
+  'cross-browser','cross browser','browser compatibility',
+  'accessibility','a11y','wcag','aria',
+  'web performance','performance optimization','core web vitals','lighthouse','page speed',
+  'lazy loading','code splitting','tree shaking','bundle size','memoization',
+  'react.js','reactjs','next.js','nextjs','vue.js','vuejs','nuxt.js','nuxtjs',
+  'angular','angularjs','angular.js','ember.js','svelte','sveltekit','solid.js','solidjs',
+  'node.js','nodejs','express.js','expressjs','nestjs','fastify',
+  'spring boot','spring framework','asp.net','asp.net core','ruby on rails','django','flask','fastapi',
+  'react native','flutter','swift','swiftui','jetpack compose',
+  'typescript','javascript','ecmascript','es6','es2015','es2020',
+  'java','kotlin','python','go','golang','rust','c#','c++',
+  'html5','css3','sass','scss','less','stylus','postcss','tailwind','tailwindcss',
+  'bootstrap','material ui','mui','chakra ui','styled-components','emotion','css modules','css-in-js',
+  'redux','redux toolkit','rtk','mobx','zustand','recoil','jotai','ngrx','rxjs','context api',
+  'unit testing','unit tests','integration testing','integration tests',
+  'e2e testing','end-to-end testing','end to end testing',
+  'test-driven development','test driven development','tdd','behavior-driven development','bdd',
+  'jest','vitest','mocha','jasmine','karma','cypress','playwright','selenium','puppeteer','testing library','storybook',
+  'webpack','vite','rollup','parcel','esbuild','turbopack','babel','swc',
+  'eslint','prettier','husky','lint-staged','npm','yarn','pnpm',
+  'restful api','rest api','rest apis','restful apis','rest','graphql','grpc','websocket','websockets',
+  'api design','api integration','api consumption','third-party api','third party api',
+  'oauth','oauth2','jwt','sso','saml','authentication','authorization',
+  'microservices','micro-services','monolithic','service-oriented architecture','soa',
+  'event-driven architecture','event driven','message queue','message queues','pub/sub','kafka','rabbitmq','sqs',
+  'postgresql','mysql','mongodb','redis','elasticsearch','cassandra','dynamodb','firestore',
+  'sql server','oracle','sqlite','nosql','relational database',
   'amazon web services','google cloud platform','microsoft azure','azure devops',
-  'amazon s3','amazon ec2','amazon rds','amazon lambda','gcp','aws','azure',
-  'kubernetes','docker','terraform','ansible','jenkins','github actions','gitlab ci',
-  'visual studio code','vs code','jupyter notebook','google colab',
-  'sql server','mysql','postgresql','mongodb','redis','elasticsearch','cassandra',
-  'react.js','next.js','vue.js','angular','node.js','express.js','fastapi','django',
-  'spring boot','asp.net','ruby on rails','.net','entity framework',
-  'react native','flutter','swift','kotlin','android studio','xcode',
-  'figma','sketch','adobe xd','user experience','ux design','ui design',
-  'project management','product management','stakeholder management','cross functional',
-  'communication skills','problem solving','critical thinking','decision making',
+  'aws','gcp','azure','amazon s3','amazon ec2','amazon rds','amazon lambda','cloudfront',
+  'kubernetes','k8s','docker','terraform','ansible','helm',
+  'ci/cd','continuous integration','continuous deployment','continuous delivery',
+  'jenkins','github actions','gitlab ci','circleci','travis ci','azure pipelines',
+  'infrastructure as code','iac','containerization','orchestration',
+  'monitoring','observability','logging','datadog','new relic','prometheus','grafana','sentry','splunk',
+  'machine learning','deep learning','natural language processing','nlp','computer vision','cv',
+  'large language model','llm','generative ai','gen ai','prompt engineering','rag','retrieval augmented generation',
+  'data science','data engineering','data analysis','data visualization','business intelligence',
+  'apache spark','apache kafka','apache airflow','hadoop','etl','elt','data pipeline','data pipelines',
   'tensorflow','pytorch','scikit-learn','hugging face','langchain','openai',
-  'pandas','numpy','matplotlib','seaborn','plotly','scipy',
-  'git','github','gitlab','bitbucket','jira','confluence','notion','slack',
-  'linux','unix','bash','shell scripting','powershell','command line'
+  'pandas','numpy','matplotlib','seaborn','plotly','scipy','tableau','power bi','looker',
+  'agile methodology','scrum','kanban','sprint','sprint planning','retrospective',
+  'object-oriented','object oriented','oop','functional programming','fp',
+  'design pattern','design patterns','solid principles','clean code','clean architecture',
+  'system design','distributed systems','high availability','scalability','load balancing','caching',
+  'code review','peer review','pull request','pair programming',
+  'git','github','gitlab','bitbucket','jira','confluence','notion','slack','figma','sketch','adobe xd',
+  'linux','unix','bash','shell scripting','powershell','vim','vs code','visual studio code',
+  'user experience','ux design','ui design','user interface','product management','project management',
+  'stakeholder management','cross functional','cross-functional','mentoring'
 ];
 
-function tokenize(text) {
-  const lower = text.toLowerCase();
-  const found = new Set();
-  for (const phrase of TECH_PHRASES) { if (lower.includes(phrase)) found.add(phrase); }
-  const tokens = lower.replace(/[^a-z0-9#+.\-/\s]/g, ' ').split(/\s+/)
-    .filter(t => t.length > 1 && !STOPWORDS.has(t));
-  for (const t of tokens) found.add(t);
-  return found;
+const SYNONYMS = [
+  ['ci/cd','continuous integration','continuous deployment','continuous delivery'],
+  ['spa','single-page application','single page application','single-page applications','single page applications'],
+  ['pwa','progressive web app','progressive web apps'],
+  ['ssr','server-side rendering','server side rendering'],
+  ['csr','client-side rendering','client side rendering'],
+  ['ssg','static site generation','jamstack'],
+  ['rest api','restful api','rest apis','restful apis','rest','restful'],
+  ['micro-frontend','micro frontend','microfrontend','micro-frontends','micro frontends','module federation'],
+  ['microservices','micro-services','micro services'],
+  ['component-driven','component driven','component-based','component based','component-driven architecture','component library'],
+  ['design system','design systems'],
+  ['state management','app state','application state'],
+  ['responsive design','responsive web','mobile-responsive','mobile first','mobile-first'],
+  ['cross-browser','cross browser','browser compatibility'],
+  ['accessibility','a11y','wcag','aria'],
+  ['web performance','performance optimization','core web vitals','lighthouse','page speed'],
+  ['unit testing','unit tests','jest','vitest','mocha','jasmine','karma'],
+  ['e2e testing','end-to-end testing','end to end testing','cypress','playwright','selenium','puppeteer'],
+  ['integration testing','integration tests'],
+  ['tdd','test-driven development','test driven development'],
+  ['bdd','behavior-driven development','behaviour-driven development'],
+  ['build tool','webpack','vite','rollup','parcel','esbuild','turbopack'],
+  ['transpiler','babel','swc'],
+  ['css preprocessor','sass','scss','less','stylus','postcss'],
+  ['css framework','tailwind','tailwindcss','bootstrap','material ui','mui','chakra ui'],
+  ['css-in-js','styled-components','emotion','css modules'],
+  ['state library','redux','redux toolkit','rtk','mobx','zustand','recoil','jotai','ngrx','rxjs','context api'],
+  ['authentication','oauth','oauth2','jwt','sso','saml','authorization'],
+  ['typescript','ts'],
+  ['javascript','js','ecmascript','es6','es2015','es2020'],
+  ['react','react.js','reactjs'],
+  ['angular','angularjs','angular.js'],
+  ['vue','vue.js','vuejs'],
+  ['node.js','nodejs','node'],
+  ['next.js','nextjs'],
+  ['nuxt.js','nuxtjs'],
+  ['express','express.js','expressjs'],
+  ['agile','scrum','kanban','sprint','sprint planning','agile methodology'],
+  ['code review','peer review','pull request','pair programming'],
+  ['containerization','docker','container'],
+  ['orchestration','kubernetes','k8s','helm'],
+  ['cloud','aws','amazon web services','gcp','google cloud platform','azure','microsoft azure'],
+  ['relational database','postgresql','mysql','sql server','oracle','sqlite','rdbms'],
+  ['nosql','mongodb','dynamodb','cassandra','firestore'],
+  ['cache','caching','redis','memcached','cdn','cloudfront'],
+  ['monitoring','observability','logging','datadog','new relic','prometheus','grafana','sentry'],
+  ['message queue','kafka','rabbitmq','sqs','pub/sub'],
+  ['oop','object-oriented','object oriented'],
+  ['fp','functional programming'],
+  ['design pattern','design patterns','solid principles','clean code','clean architecture'],
+  ['data pipeline','data pipelines','etl','elt','apache airflow'],
+  ['nlp','natural language processing'],
+  ['computer vision','cv'],
+  ['llm','large language model','large language models','generative ai','gen ai'],
+  ['rag','retrieval augmented generation'],
+  ['version control','git']
+];
+
+const SYN_MAP = new Map();
+for (const grp of SYNONYMS) for (const v of grp) SYN_MAP.set(v, grp[0]);
+function canonicalize(term) { return SYN_MAP.get(term.toLowerCase()) || term.toLowerCase(); }
+
+const VOCAB = new Set();
+for (const p of TECH_PHRASES) VOCAB.add(p.toLowerCase());
+for (const g of SYNONYMS) for (const v of g) VOCAB.add(v.toLowerCase());
+const PHRASES_SORTED = [...VOCAB].sort((a, b) => b.length - a.length);
+
+// Returns Map<canonical, { freq, variants:Set }>
+function extractTermsFromText(text) {
+  const lower = ' ' + text.toLowerCase().replace(/[^a-z0-9#+./\-\s]/g, ' ') + ' ';
+  const counts = new Map();
+  for (const phrase of PHRASES_SORTED) {
+    const esc = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?<![a-z0-9])${esc}(?![a-z0-9])`, 'g');
+    let m, hits = 0;
+    while ((m = re.exec(lower)) !== null) hits++;
+    if (hits > 0) {
+      const canon = canonicalize(phrase);
+      const e = counts.get(canon) || { freq: 0, variants: new Set() };
+      e.freq += hits; e.variants.add(phrase);
+      counts.set(canon, e);
+    }
+  }
+  return counts;
 }
 
 function extractJDKeywords(jdText) {
-  const lower = jdText.toLowerCase();
-  const wordFreq = {};
-  const found = new Set();
-  for (const phrase of TECH_PHRASES) {
-    if (lower.includes(phrase)) {
-      const count = (lower.match(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-      wordFreq[phrase] = (wordFreq[phrase] || 0) + count * 3;
-      found.add(phrase);
-    }
+  const counts = extractTermsFromText(jdText);
+  const list = [];
+  for (const [canon, info] of counts) {
+    list.push({ kw: canon, weight: Math.min(info.freq, 4), variants: [...info.variants] });
   }
-  const tokens = lower.replace(/[^a-z0-9#+.\-/\s]/g, ' ').split(/\s+/)
-    .filter(t => t.length > 2 && !STOPWORDS.has(t));
-  for (const t of tokens) { wordFreq[t] = (wordFreq[t] || 0) + 1; found.add(t); }
-  return [...found].map(kw => ({
-    kw, score: (wordFreq[kw] || 0) + (TECH_PHRASES.includes(kw) ? 5 : 0)
-  })).sort((a, b) => b.score - a.score);
+  return list.sort((a, b) => b.weight - a.weight);
 }
 
-function computeScore(jdKeywords, resumeTokens) {
+function canonicalSet(text) {
+  return new Set(extractTermsFromText(text).keys());
+}
+
+function computeScore(jdKeywords, canonSet) {
   if (!jdKeywords.length) return 0;
-  const top = jdKeywords.slice(0, 60);
-  const total = top.reduce((s, k) => s + k.score, 0);
-  let matched = 0;
-  for (const k of top) { if (resumeTokens.has(k.kw)) matched += k.score; }
+  let total = 0, matched = 0;
+  for (const k of jdKeywords) {
+    total += k.weight;
+    if (canonSet.has(k.kw)) matched += k.weight;
+  }
+  if (!total) return 0;
   return Math.min(100, Math.round((matched / total) * 100));
 }
 
-function buildGapTable(jdKeywords, resumeTokens, addedKeywords) {
+function buildGapTable(jdKeywords, beforeSet, addedSet) {
   return jdKeywords.slice(0, 40).map(k => ({
     keyword: k.kw,
-    inResume: resumeTokens.has(k.kw),
-    added: addedKeywords.has(k.kw)
+    inResume: beforeSet.has(k.kw),
+    added: addedSet.has(k.kw)
   }));
 }
 
 function resumeToScoringText(resume) {
   return [
     resume.name, resume.title, resume.summary,
-    ...(resume.skills     || []).flatMap(g => g.items),
+    ...(resume.skills     || []).flatMap(g => [g.category, ...(g.items || [])]),
     ...(resume.experience || []).flatMap(j => [j.company, j.title, ...(j.bullets || [])]),
-    ...(resume.projects   || []).flatMap(p => [p.name, ...(p.bullets  || [])]),
+    ...(resume.projects   || []).flatMap(p => [p.name, p.context, ...(p.bullets || [])]),
     ...(resume.education  || []).map(e => [e.degree, e.institution].join(' '))
   ].filter(Boolean).join('\n');
 }
@@ -499,17 +578,16 @@ async function runOptimization(payload) {
 
   try {
     setStep(stepEls, 0); await sleep(150);
-    const jdKeywords   = extractJDKeywords(jdText);
-    const resumeTokens = tokenize(resumeText);
+    const jdKeywords = extractJDKeywords(jdText);
+    const beforeSet  = canonicalSet(resumeText);
 
     setStep(stepEls, 1); await sleep(150);
-    const clientScoreBefore = computeScore(jdKeywords, resumeTokens);
+    const clientScoreBefore = computeScore(jdKeywords, beforeSet);
 
     setStep(stepEls, 2);
     const res = await fetchWorker(payload);
 
     if (res.status === 401) {
-      // Admin password rejected mid-session — exit admin mode and re-show panel
       exitAdminMode();
       throw new Error('401: Admin session expired. Please re-enter your password.');
     }
@@ -527,18 +605,16 @@ async function runOptimization(payload) {
     }
 
     setStep(stepEls, 3); await sleep(100);
-    const addedKeywords = new Set(result.missingKeywords || []);
-    if (addedKeywords.size === 0) {
-      const optimTokens = tokenize(resumeToScoringText(result.resume));
-      for (const k of jdKeywords.slice(0, 40)) {
-        if (!resumeTokens.has(k.kw) && optimTokens.has(k.kw)) addedKeywords.add(k.kw);
-      }
+    // Build before/after canonical sets and derive "added by optimizer"
+    const afterSet = canonicalSet(resumeToScoringText(result.resume));
+    const addedSet = new Set();
+    for (const k of jdKeywords.slice(0, 40)) {
+      if (!beforeSet.has(k.kw) && afterSet.has(k.kw)) addedSet.add(k.kw);
     }
-    const gapRows = buildGapTable(jdKeywords, resumeTokens, addedKeywords);
+    const gapRows = buildGapTable(jdKeywords, beforeSet, addedSet);
 
     setStep(stepEls, 4); await sleep(100);
 
-    // Render results
     document.getElementById('loadingSection').style.display = 'none';
     document.getElementById('inputSection').style.display   = 'block';
     document.getElementById('loadingText').textContent      = 'Analyzing your resume against the job description…';
@@ -548,8 +624,7 @@ async function runOptimization(payload) {
     resultsEl.classList.add('fade-in');
 
     const scoreBefore = result.beforeScore ?? clientScoreBefore;
-    const scoreAfter  = result.afterScore  ??
-      computeScore(jdKeywords, tokenize(resumeToScoringText(result.resume)));
+    const scoreAfter  = result.afterScore  ?? computeScore(jdKeywords, afterSet);
 
     document.getElementById('scoreBefore').textContent = '0';
     document.getElementById('scoreAfter').textContent  = '0';
