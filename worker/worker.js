@@ -1,190 +1,416 @@
 /**
  * ATS Resume Optimizer — Cloudflare Worker
  *
- * Required secrets (set via `wrangler secret put`):
+ * Secrets:
  *   ANTHROPIC_API_KEY    — Anthropic API key
- *   ACCESS_PASSWORD      — Admin-only bypass password (hidden icon in footer)
- *   RAZORPAY_KEY_ID      — Razorpay publishable key  (e.g. rzp_live_xxx or rzp_test_xxx)
+ *   TOTP_SECRET          — base32 secret for admin TOTP (Google Authenticator/Authy)
+ *   RAZORPAY_KEY_ID      — Razorpay publishable key
  *   RAZORPAY_KEY_SECRET  — Razorpay secret key (NEVER in frontend)
+ *   ACCESS_PASSWORD      — DEPRECATED, no longer used (safe to delete)
  *
  * Actions:
- *   POST { action: "ping",         password }
- *     → 200 { ok: true }  |  401
- *
- *   POST { action: "create-order" }
- *     → 200 { orderId, amount, currency, keyId }  |  503
- *
- *   POST { action: "optimize", password, resumeText, jobDescription }
- *     → Admin path: validates ACCESS_PASSWORD
- *
- *   POST { action: "optimize",
- *          razorpay_order_id, razorpay_payment_id, razorpay_signature,
- *          resumeText, jobDescription }
- *     → Paid path: verifies HMAC-SHA256 signature before optimizing
+ *   verify-totp   { code }                                       → 200 { ok, sessionToken } | 401
+ *   create-order  {}                                             → 200 { orderId, … }       | 503
+ *   optimize      { admin_session, resumeText, jobDescription }  → admin path
+ *   optimize      { razorpay_*, resumeText, jobDescription }     → paid path (HMAC verified)
  */
 
-// ── Scoring helpers (mirrors app.js) ──────────────────────────────────────────
-const STOPWORDS = new Set([
-  'a','about','above','after','again','against','all','am','an','and','any','are',
-  'as','at','be','because','been','before','being','below','between','both','but','by',
-  'can','did','do','does','doing','don','down','during','each','few','for','from',
-  'further','get','got','had','has','have','having','he','her','here','hers','herself',
-  'him','himself','his','how','i','if','in','into','is','it','its','itself','just',
-  'me','more','most','my','myself','no','nor','not','now','of','off','on','once',
-  'only','or','other','our','ours','ourselves','out','over','own','re','same','she',
-  'should','so','some','such','than','that','the','their','them','themselves','then',
-  'there','these','they','this','those','through','to','too','under','until','up',
-  'us','very','was','we','were','what','when','where','which','while','who','whom',
-  'why','will','with','you','your','yours','yourself','yourselves','would','could',
-  'may','might','must','shall','need','dare','ought','used','s','t','ve','re','d',
-  'll','m','o','y','ain','aren','couldn','didn','doesn','hadn','hasn','haven',
-  'isn','ma','mightn','mustn','needn','shan','shouldn','wasn','weren','won','wouldn',
-  'including','experience','years','year','also','etc','strong','good','excellent',
-  'work','working','ability','skills','knowledge','understanding','using','use','used',
-  'across','within','multiple','key','well','new','high','level','different','various',
-  'make','team','teams','ensure','provide','support','responsible','responsibilities',
-  'role','position','candidate','looking','seeking','job','opportunity','company',
-  'apply','application','required','requirement','requirements','preferred','minimum',
-  'plus','bonus','ideally','nice','will','must','able','help','drive','lead',
-  'build','develop','manage','create','contribute','collaborate','communicate','work'
-]);
-
+// ── Vocabulary — multi-word phrases first ──────────────────────────────────
 const TECH_PHRASES = [
-  'machine learning','deep learning','natural language processing','computer vision',
-  'data science','data engineering','data analysis','data visualization','business intelligence',
-  'software engineering','software development','full stack','full-stack','front end','back end',
-  'frontend','backend','web development','mobile development','cloud computing',
-  'devops','mlops','dataops','ci/cd','continuous integration','continuous deployment',
-  'restful api','rest api','graphql api','api design','microservices','monolithic',
-  'containerization','infrastructure as code','agile methodology','scrum','kanban',
-  'test driven development','tdd','behavior driven development','bdd',
-  'object oriented','functional programming','system design','distributed systems',
-  'large language model','llm','generative ai','gen ai','reinforcement learning',
-  'neural network','transformer','attention mechanism','fine tuning','prompt engineering',
-  'vector database','knowledge graph','rag','retrieval augmented generation',
-  'a/b testing','statistical analysis','hypothesis testing','regression analysis',
-  'time series','feature engineering','model deployment','model evaluation',
-  'power bi','tableau','google analytics','adobe analytics','looker','metabase',
-  'apache spark','apache kafka','apache airflow','apache flink','hadoop',
+  // Core eng / FE
+  'single-page application','single page application','single-page applications','single page applications','spa',
+  'progressive web app','progressive web apps','pwa',
+  'server-side rendering','server side rendering','ssr',
+  'client-side rendering','client side rendering','csr',
+  'static site generation','ssg','jamstack',
+  'web components','custom elements','shadow dom',
+  'design system','design systems','component library',
+  'component-driven','component driven','component-based','component based','component-driven architecture',
+  'micro-frontend','micro frontend','microfrontend','micro-frontends','micro frontends','module federation',
+  'state management','app state','application state',
+  'responsive design','responsive web','mobile-responsive','mobile first','mobile-first',
+  'cross-browser','cross browser','browser compatibility',
+  'accessibility','a11y','wcag','aria',
+  'web performance','performance optimization','core web vitals','lighthouse','page speed',
+  'lazy loading','code splitting','tree shaking','bundle size','memoization',
+
+  // Frameworks / libs
+  'react.js','reactjs','next.js','nextjs','vue.js','vuejs','nuxt.js','nuxtjs',
+  'angular','angularjs','angular.js','ember.js','svelte','sveltekit','solid.js','solidjs',
+  'node.js','nodejs','express.js','expressjs','nestjs','fastify',
+  'spring boot','spring framework','asp.net','asp.net core','ruby on rails','django','flask','fastapi',
+  'react native','flutter','swift','swiftui','jetpack compose',
+
+  // Languages
+  'typescript','javascript','ecmascript','es6','es2015','es2020',
+  'java','kotlin','python','go','golang','rust','c#','c++',
+  'html5','css3','sass','scss','less','stylus','postcss','tailwind','tailwindcss',
+  'bootstrap','material ui','mui','chakra ui','styled-components','emotion','css modules','css-in-js',
+
+  // State / RxJS
+  'redux','redux toolkit','rtk','mobx','zustand','recoil','jotai','ngrx','rxjs','context api',
+
+  // Testing
+  'unit testing','unit tests','integration testing','integration tests',
+  'e2e testing','end-to-end testing','end to end testing',
+  'test-driven development','test driven development','tdd','behavior-driven development','bdd',
+  'jest','vitest','mocha','jasmine','karma','cypress','playwright','selenium','puppeteer','testing library',
+  'storybook',
+
+  // Build / tooling
+  'webpack','vite','rollup','parcel','esbuild','turbopack','babel','swc',
+  'eslint','prettier','husky','lint-staged','npm','yarn','pnpm',
+
+  // APIs / networking
+  'restful api','rest api','rest apis','restful apis','rest','graphql','grpc','websocket','websockets',
+  'api design','api integration','api consumption','third-party api','third party api',
+  'oauth','oauth2','jwt','sso','saml','authentication','authorization',
+
+  // Backend / data
+  'microservices','micro-services','monolithic','service-oriented architecture','soa',
+  'event-driven architecture','event driven','message queue','message queues','pub/sub','kafka','rabbitmq','sqs',
+  'postgresql','mysql','mongodb','redis','elasticsearch','cassandra','dynamodb','firestore',
+  'sql server','oracle','sqlite','nosql','relational database',
+
+  // Cloud / ops
   'amazon web services','google cloud platform','microsoft azure','azure devops',
-  'amazon s3','amazon ec2','amazon rds','amazon lambda','gcp','aws','azure',
-  'kubernetes','docker','terraform','ansible','jenkins','github actions','gitlab ci',
-  'sql server','mysql','postgresql','mongodb','redis','elasticsearch','cassandra',
-  'react.js','next.js','vue.js','angular','node.js','express.js','fastapi','django',
-  'spring boot','asp.net','ruby on rails','.net','entity framework',
-  'react native','flutter','swift','kotlin',
-  'figma','sketch','adobe xd','user experience','ux design','ui design',
-  'project management','product management','stakeholder management','cross functional',
+  'aws','gcp','azure','amazon s3','amazon ec2','amazon rds','amazon lambda','cloudfront','cloudfunctions',
+  'kubernetes','k8s','docker','terraform','ansible','helm',
+  'ci/cd','continuous integration','continuous deployment','continuous delivery',
+  'jenkins','github actions','gitlab ci','circleci','travis ci','azure pipelines',
+  'infrastructure as code','iac','containerization','orchestration',
+
+  // Observability
+  'monitoring','observability','logging','datadog','new relic','prometheus','grafana','sentry','splunk',
+
+  // ML / data
+  'machine learning','deep learning','natural language processing','nlp','computer vision','cv',
+  'large language model','llm','generative ai','gen ai','prompt engineering','rag','retrieval augmented generation',
+  'data science','data engineering','data analysis','data visualization','business intelligence',
+  'apache spark','apache kafka','apache airflow','hadoop','etl','elt','data pipeline','data pipelines',
   'tensorflow','pytorch','scikit-learn','hugging face','langchain','openai',
-  'pandas','numpy','matplotlib','seaborn','plotly','scipy',
-  'git','github','gitlab','bitbucket','jira','confluence','notion','slack',
-  'linux','unix','bash','shell scripting','powershell','command line'
+  'pandas','numpy','matplotlib','seaborn','plotly','scipy','tableau','power bi','looker',
+
+  // Methodology
+  'agile methodology','scrum','kanban','sprint','sprint planning','retrospective',
+  'object-oriented','object oriented','oop','functional programming','fp',
+  'design pattern','design patterns','solid principles','clean code','clean architecture',
+  'system design','distributed systems','high availability','scalability','load balancing','caching',
+  'code review','peer review','pull request','pair programming',
+
+  // Tools
+  'git','github','gitlab','bitbucket','jira','confluence','notion','slack','figma','sketch','adobe xd',
+  'linux','unix','bash','shell scripting','powershell','vim','vs code','visual studio code',
+
+  // Soft
+  'user experience','ux design','ui design','user interface','product management','project management',
+  'stakeholder management','cross functional','cross-functional','mentoring',
 ];
 
-function tokenize(text) {
-  const lower = text.toLowerCase();
-  const found = new Set();
-  for (const phrase of TECH_PHRASES) {
-    if (lower.includes(phrase)) found.add(phrase);
-  }
-  const tokens = lower.replace(/[^a-z0-9#+.\-/\s]/g, ' ').split(/\s+/)
-    .filter(t => t.length > 1 && !STOPWORDS.has(t));
-  for (const t of tokens) found.add(t);
-  return found;
+// ── Synonym groups — every variant maps to ONE canonical token ─────────────
+const SYNONYMS = [
+  ['ci/cd','continuous integration','continuous deployment','continuous delivery'],
+  ['spa','single-page application','single page application','single-page applications','single page applications'],
+  ['pwa','progressive web app','progressive web apps'],
+  ['ssr','server-side rendering','server side rendering'],
+  ['csr','client-side rendering','client side rendering'],
+  ['ssg','static site generation','jamstack'],
+  ['rest api','restful api','rest apis','restful apis','rest','restful'],
+  ['micro-frontend','micro frontend','microfrontend','micro-frontends','micro frontends','module federation'],
+  ['microservices','micro-services','micro services'],
+  ['component-driven','component driven','component-based','component based','component-driven architecture','component library'],
+  ['design system','design systems'],
+  ['state management','app state','application state'],
+  ['responsive design','responsive web','mobile-responsive','mobile first','mobile-first'],
+  ['cross-browser','cross browser','browser compatibility'],
+  ['accessibility','a11y','wcag','aria'],
+  ['web performance','performance optimization','core web vitals','lighthouse','page speed'],
+  ['unit testing','unit tests','jest','vitest','mocha','jasmine','karma'],
+  ['e2e testing','end-to-end testing','end to end testing','cypress','playwright','selenium','puppeteer'],
+  ['integration testing','integration tests'],
+  ['tdd','test-driven development','test driven development'],
+  ['bdd','behavior-driven development','behaviour-driven development'],
+  ['build tool','webpack','vite','rollup','parcel','esbuild','turbopack'],
+  ['transpiler','babel','swc'],
+  ['css preprocessor','sass','scss','less','stylus','postcss'],
+  ['css framework','tailwind','tailwindcss','bootstrap','material ui','mui','chakra ui'],
+  ['css-in-js','styled-components','emotion','css modules'],
+  ['state library','redux','redux toolkit','rtk','mobx','zustand','recoil','jotai','ngrx','rxjs','context api'],
+  ['authentication','oauth','oauth2','jwt','sso','saml','authorization'],
+  ['typescript','ts'],
+  ['javascript','js','ecmascript','es6','es2015','es2020'],
+  ['react','react.js','reactjs'],
+  ['angular','angularjs','angular.js'],
+  ['vue','vue.js','vuejs'],
+  ['node.js','nodejs','node'],
+  ['next.js','nextjs'],
+  ['nuxt.js','nuxtjs'],
+  ['express','express.js','expressjs'],
+  ['agile','scrum','kanban','sprint','sprint planning','agile methodology'],
+  ['code review','peer review','pull request','pair programming'],
+  ['containerization','docker','container'],
+  ['orchestration','kubernetes','k8s','helm'],
+  ['cloud','aws','amazon web services','gcp','google cloud platform','azure','microsoft azure'],
+  ['relational database','postgresql','mysql','sql server','oracle','sqlite','rdbms'],
+  ['nosql','mongodb','dynamodb','cassandra','firestore'],
+  ['cache','caching','redis','memcached','cdn','cloudfront'],
+  ['monitoring','observability','logging','datadog','new relic','prometheus','grafana','sentry'],
+  ['message queue','kafka','rabbitmq','sqs','pub/sub'],
+  ['oop','object-oriented','object oriented'],
+  ['fp','functional programming'],
+  ['design pattern','design patterns','solid principles','clean code','clean architecture'],
+  ['data pipeline','data pipelines','etl','elt','apache airflow'],
+  ['nlp','natural language processing'],
+  ['computer vision','cv'],
+  ['llm','large language model','large language models','generative ai','gen ai'],
+  ['rag','retrieval augmented generation'],
+  ['version control','git'],
+];
+
+// canonical lookup
+const SYN_MAP = new Map();
+for (const grp of SYNONYMS) for (const v of grp) SYN_MAP.set(v, grp[0]);
+
+function canonicalize(term) {
+  return SYN_MAP.get(term.toLowerCase()) || term.toLowerCase();
 }
 
-function extractJDKeywords(jdText) {
-  const lower = jdText.toLowerCase();
-  const wordFreq = {};
-  const found = new Set();
-  for (const phrase of TECH_PHRASES) {
-    if (lower.includes(phrase)) {
-      const count = (lower.match(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-      wordFreq[phrase] = (wordFreq[phrase] || 0) + count * 3;
-      found.add(phrase);
+// Curated vocabulary set (lowercase) — anything we'll consider a "keyword"
+const VOCAB = new Set();
+for (const p of TECH_PHRASES) VOCAB.add(p.toLowerCase());
+for (const g of SYNONYMS) for (const v of g) VOCAB.add(v.toLowerCase());
+
+// Sort phrases longest-first so multi-word matches win over substrings
+const PHRASES_SORTED = [...VOCAB].sort((a, b) => b.length - a.length);
+
+// ── Extraction ─────────────────────────────────────────────────────────────
+// Returns: Map<canonical, { freq, variants:Set<string> }>
+function extractTermsFromText(text) {
+  const lower = ' ' + text.toLowerCase().replace(/[^a-z0-9#+./\-\s]/g, ' ') + ' ';
+  const counts = new Map();
+
+  // Multi-word phrases + single tech tokens via word-boundary search
+  for (const phrase of PHRASES_SORTED) {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // word-boundary that tolerates our token chars (#+./-)
+    const re = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'g');
+    let m, hits = 0;
+    while ((m = re.exec(lower)) !== null) hits++;
+    if (hits > 0) {
+      const canon = canonicalize(phrase);
+      const entry = counts.get(canon) || { freq: 0, variants: new Set() };
+      entry.freq += hits;
+      entry.variants.add(phrase);
+      counts.set(canon, entry);
     }
   }
-  const tokens = lower.replace(/[^a-z0-9#+.\-/\s]/g, ' ').split(/\s+/)
-    .filter(t => t.length > 2 && !STOPWORDS.has(t));
-  for (const t of tokens) { wordFreq[t] = (wordFreq[t] || 0) + 1; found.add(t); }
-  return [...found].map(kw => ({
-    kw, score: (wordFreq[kw] || 0) + (TECH_PHRASES.includes(kw) ? 5 : 0)
-  })).sort((a, b) => b.score - a.score);
+  return counts;
 }
 
-function computeScore(jdKeywords, resumeTokens) {
+// Extract JD keywords as a sorted list of canonical terms with weights.
+// Weight = JD frequency (capped) — higher freq = more important.
+function extractJDKeywords(jdText) {
+  const counts = extractTermsFromText(jdText);
+  const list = [];
+  for (const [canon, info] of counts) {
+    // Cap freq at 4 so a single noisy repeat doesn't dominate
+    const weight = Math.min(info.freq, 4);
+    list.push({ kw: canon, weight, variants: [...info.variants] });
+  }
+  return list.sort((a, b) => b.weight - a.weight);
+}
+
+// Score = (matched weight / total weight) * 100
+// Hit if ANY canonical variant appears in the resume's canonical set.
+function computeScore(jdKeywords, resumeCanonicalSet) {
   if (!jdKeywords.length) return 0;
-  const top = jdKeywords.slice(0, 60);
-  const total = top.reduce((s, k) => s + k.score, 0);
-  let matched = 0;
-  for (const k of top) { if (resumeTokens.has(k.kw)) matched += k.score; }
+  let total = 0, matched = 0;
+  for (const k of jdKeywords) {
+    total += k.weight;
+    if (resumeCanonicalSet.has(k.kw)) matched += k.weight;
+  }
+  if (!total) return 0;
   return Math.min(100, Math.round((matched / total) * 100));
+}
+
+// Build canonical Set of terms present in a text
+function canonicalSet(text) {
+  const counts = extractTermsFromText(text);
+  return new Set(counts.keys());
 }
 
 function resumeToScoringText(resume) {
   return [
     resume.name, resume.title, resume.summary,
-    ...(resume.skills     || []).flatMap(g => g.items),
+    ...(resume.skills     || []).flatMap(g => [g.category, ...(g.items || [])]),
     ...(resume.experience || []).flatMap(j => [j.company, j.title, ...(j.bullets || [])]),
-    ...(resume.projects   || []).flatMap(p => [p.name, ...(p.bullets || [])]),
+    ...(resume.projects   || []).flatMap(p => [p.name, p.context, ...(p.bullets || [])]),
     ...(resume.education  || []).map(e => [e.degree, e.institution].join(' '))
   ].filter(Boolean).join('\n');
 }
 
-// ── Razorpay helpers ──────────────────────────────────────────────────────────
-
+// ── Razorpay helpers ───────────────────────────────────────────────────────
 async function createRazorpayOrder(keyId, keySecret) {
-  const credentials = btoa(`${keyId}:${keySecret}`);
+  const creds = btoa(`${keyId}:${keySecret}`);
   const res = await fetch('https://api.razorpay.com/v1/orders', {
     method: 'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Basic ${credentials}`
-    },
-    body: JSON.stringify({
-      amount:   2000,                     // ₹20 in paise
-      currency: 'INR',
-      receipt:  `ats_${Date.now()}`
-    })
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Basic ${creds}` },
+    body: JSON.stringify({ amount: 2000, currency: 'INR', receipt: `ats_${Date.now()}` })
   });
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.description || `Razorpay error ${res.status}`);
   }
-  return res.json(); // { id, amount, currency, … }
+  return res.json();
 }
 
-// HMAC-SHA256 signature verification (Razorpay spec)
-// expected_signature = HMAC_SHA256(order_id + "|" + payment_id, key_secret)
 async function verifyRazorpaySignature(orderId, paymentId, signature, keySecret) {
-  const enc     = new TextEncoder();
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw', enc.encode(keySecret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false, ['sign']
-  );
-  const sigBuf  = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(`${orderId}|${paymentId}`));
-  const computed = Array.from(new Uint8Array(sigBuf))
-    .map(b => b.toString(16).padStart(2, '0')).join('');
+  const enc = new TextEncoder();
+  const ck = await crypto.subtle.importKey('raw', enc.encode(keySecret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const buf = await crypto.subtle.sign('HMAC', ck, enc.encode(`${orderId}|${paymentId}`));
+  const computed = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   return computed === signature;
 }
 
-// ── Claude API ────────────────────────────────────────────────────────────────
-async function callClaude(resumeText, jobDescription, apiKey) {
-  const prompt = `You are an expert ATS resume optimizer and career coach.
+// ── TOTP (RFC 6238) + admin session tokens ────────────────────────────────
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
-TASK: Analyze the candidate's resume against the job description, then return an ATS-optimized version as a single valid JSON object.
+function base32Decode(input) {
+  const clean = input.toUpperCase().replace(/=+$/, '').replace(/\s/g, '');
+  const bytes = [];
+  let bits = 0, value = 0;
+  for (const ch of clean) {
+    const idx = BASE32_ALPHABET.indexOf(ch);
+    if (idx === -1) throw new Error('Invalid base32 char: ' + ch);
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(bytes);
+}
 
-CRITICAL RULES:
-1. "company", "title", "dates", "location", "degree", "institution" MUST be copied character-for-character from the resume. Never rephrase or prepend anything.
-2. "bullets" under each job/project are the ONLY content you rewrite: strong past-tense action verb + what they did + technology + quantified impact if present. Do NOT invent metrics.
-3. "summary": 2–3 sentences referencing the target role and 3–5 JD keywords where honest.
-4. "skills": group by category (Frontend, Backend, Cloud, Tools, Databases). Only include skills that appear in the candidate's resume.
-5. Never fabricate any employer, date, institution, metric, or project.
-6. Return ONLY the raw JSON object — no markdown fences, no explanation. Your entire response must be parseable by JSON.parse().
+async function totpCodeAt(base32Secret, timeSec) {
+  const counter = Math.floor(timeSec / 30);
+  // 8-byte big-endian counter
+  const counterBuf = new ArrayBuffer(8);
+  const dv = new DataView(counterBuf);
+  dv.setUint32(0, Math.floor(counter / 0x100000000));
+  dv.setUint32(4, counter & 0xffffffff);
 
-OUTPUT SCHEMA:
+  const key = await crypto.subtle.importKey(
+    'raw', base32Decode(base32Secret),
+    { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']
+  );
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, counterBuf));
+  // Dynamic truncation (RFC 6238 §5.3)
+  const off = sig[sig.length - 1] & 0x0f;
+  const bin = ((sig[off]     & 0x7f) << 24) |
+              ((sig[off + 1] & 0xff) << 16) |
+              ((sig[off + 2] & 0xff) <<  8) |
+               (sig[off + 3] & 0xff);
+  return String(bin % 1_000_000).padStart(6, '0');
+}
+
+// Verify TOTP with ±1 step window for clock skew tolerance (≈90s effective window)
+async function verifyTOTP(token, base32Secret) {
+  if (!/^\d{6}$/.test(String(token || ''))) return false;
+  const now = Math.floor(Date.now() / 1000);
+  for (let w = -1; w <= 1; w++) {
+    const expected = await totpCodeAt(base32Secret, now + w * 30);
+    // constant-time compare
+    if (token.length === expected.length) {
+      let eq = 0;
+      for (let i = 0; i < token.length; i++) eq |= token.charCodeAt(i) ^ expected.charCodeAt(i);
+      if (eq === 0) return true;
+    }
+  }
+  return false;
+}
+
+// Issue/verify HMAC-signed admin session — keyed by TOTP_SECRET
+async function hmacSha256Hex(key, msg) {
+  const enc = new TextEncoder();
+  const ck = await crypto.subtle.importKey('raw', enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const buf = await crypto.subtle.sign('HMAC', ck, enc.encode(msg));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function issueAdminSession(secret, ttlSec = 3600) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const payload = `admin|${exp}`;
+  const sig = await hmacSha256Hex(secret, payload);
+  return `${exp}.${sig}`;
+}
+
+async function verifyAdminSession(token, secret) {
+  if (!token || typeof token !== 'string') return false;
+  const dot = token.indexOf('.');
+  if (dot < 1) return false;
+  const exp = parseInt(token.slice(0, dot), 10);
+  const sig = token.slice(dot + 1);
+  if (!exp || exp < Math.floor(Date.now() / 1000)) return false;
+  const expected = await hmacSha256Hex(secret, `admin|${exp}`);
+  // constant-time compare
+  if (sig.length !== expected.length) return false;
+  let eq = 0;
+  for (let i = 0; i < sig.length; i++) eq |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+  return eq === 0;
+}
+
+// ── Claude API ─────────────────────────────────────────────────────────────
+async function callClaude(resumeText, jobDescription, apiKey, jdTopTerms) {
+  const jdTermsHint = jdTopTerms.slice(0, 30).map(t => t.kw).join(', ');
+
+  const prompt = `You are an elite ATS resume optimizer.
+
+ABSOLUTE TRUTHFULNESS:
+- NEVER invent skills, tools, employers, titles, dates, certifications, projects, or metrics the candidate doesn't have.
+- Renaming/elevating REAL experience to use the JD's exact terminology is REQUIRED and is the main lever for score.
+- If a JD term has zero honest evidence in the resume, OMIT it entirely.
+
+YOUR EXHAUSTIVE PASS:
+
+STEP 1 — Extract every hard term from the JD:
+  Tools, frameworks, languages, methodologies, key phrases — including acronyms AND expansions
+  (e.g. "CI/CD" + "Continuous Integration / Continuous Deployment", "SPA" + "Single-Page Applications",
+  "REST API" + "RESTful API", "TDD" + "Test-Driven Development").
+  JD's top high-value terms include: ${jdTermsHint || '(none detected — extract them yourself)'}.
+
+STEP 2 — Map JD terms to REAL evidence in the candidate's resume:
+  For every JD term, scan for ANY honest evidence — even worded differently or implied by a tool/project:
+    • "made reusable UI pieces" + JD wants "component-driven architecture" → rename to "component-driven architecture" (true).
+    • Used Angular/React heavily but didn't write "SPA" → add "single-page applications (SPA)" (Angular/React apps ARE SPAs).
+    • Built REST integrations → surface "RESTful API integration" / "API consumption" — whatever the JD uses.
+    • Wrote Jest tests → surface "unit testing" (JD wording).
+    • Used Docker → surface "containerization".
+    • Used Webpack/Vite → surface "build tooling" / "module bundling".
+  If the evidence is real, USE THE JD'S EXACT TERMINOLOGY (including acronym + expansion pair when JD does).
+
+STEP 3 — Rewrite EVERY bullet with this formula:
+  strong past-tense verb + concrete action + named technologies (mirrored to JD) + quantified impact (only real numbers from original, never invent).
+  If a bullet has no real metric, strengthen it without fabricating one.
+
+STEP 4 — Summary (2-3 sentences):
+  Tight, keyword-dense. Mirror the JD's role title. Pack 5-8 of the candidate's REAL top skills using the JD's wording.
+
+STEP 5 — Skills (grouped, readable, no blob):
+  Group as e.g. Frontend / Backend / Cloud & DevOps / Testing / Databases / Tools.
+  Reorder so JD-relevant real skills lead. Use the JD's exact terminology where the candidate honestly has the skill.
+  Where natural, include both acronym AND expansion in the same item (e.g. "CI/CD (Continuous Integration & Deployment)").
+  NO bare keyword dump. NO duplicate lowercase blob.
+
+STEP 6 — Headline ("title" field):
+  Mirror the JD job title where truthful (e.g. "Senior Frontend Engineer" if the candidate's level matches).
+  If the candidate's real level is below the JD's, keep the real title.
+
+DENSITY: The same real skill should appear naturally across summary + skills + bullets — that reinforcement is honest and how good resumes are written.
+
+JSON SCHEMA (return ONLY valid JSON, no markdown fences, no preamble):
 {
   "name": "string",
   "title": "string",
@@ -196,160 +422,124 @@ OUTPUT SCHEMA:
   "education":  [ { "degree": "string", "institution": "string", "dates": "string", "location": "string" } ]
 }
 
+PRESERVED VERBATIM (NEVER rephrase, never prepend, never reorder words):
+  company, title (job title under experience), dates, location, degree, institution, project name.
+
 JOB DESCRIPTION:
-${jobDescription.slice(0, 2500)}
+${jobDescription.slice(0, 3500)}
 
 CANDIDATE RESUME:
-${resumeText.slice(0, 2500)}`;
+${resumeText.slice(0, 3500)}`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: {
-      'Content-Type':    'application/json',
-      'x-api-key':       apiKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model:      'claude-sonnet-4-6',
-      max_tokens: 4000,
-      messages:   [{ role: 'user', content: prompt }]
-    })
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 4000, messages: [{ role: 'user', content: prompt }] })
   });
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || `Anthropic error ${res.status}`);
   }
-
-  const data    = await res.json();
-  const raw     = data.content[0].text.trim();
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch (e) {
-    throw new Error(`Claude returned invalid JSON: ${e.message}. Preview: ${cleaned.slice(0, 200)}`);
-  }
+  const data = await res.json();
+  const cleaned = data.content[0].text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try { return JSON.parse(cleaned); }
+  catch (e) { throw new Error(`Claude returned invalid JSON: ${e.message}`); }
 }
 
-// ── CORS & response helpers ───────────────────────────────────────────────────
+// ── CORS & responses ───────────────────────────────────────────────────────
 const CORS = {
-  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type'
 };
-
 function jsonRes(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...CORS, 'Content-Type': 'application/json' }
-  });
+  return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
 
-// ── Action handlers ───────────────────────────────────────────────────────────
-
-function handlePing(body, env) {
-  const { password } = body;
-  if (!password || password !== env.ACCESS_PASSWORD) {
-    return jsonRes({ error: 'Invalid password' }, 401);
-  }
-  return jsonRes({ ok: true });
+// ── Handlers ───────────────────────────────────────────────────────────────
+async function handleVerifyTOTP(body, env) {
+  if (!env.TOTP_SECRET) return jsonRes({ error: 'Admin TOTP not configured' }, 503);
+  const code = String(body.code || '').trim();
+  const ok = await verifyTOTP(code, env.TOTP_SECRET);
+  if (!ok) return jsonRes({ error: 'Invalid or expired code' }, 401);
+  const sessionToken = await issueAdminSession(env.TOTP_SECRET, 3600); // 1 h
+  return jsonRes({ ok: true, sessionToken, expiresIn: 3600 });
 }
 
 async function handleCreateOrder(env) {
-  if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET) {
-    return jsonRes({ error: 'Payment not configured on server' }, 503);
-  }
+  if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET) return jsonRes({ error: 'Payment not configured' }, 503);
   try {
     const order = await createRazorpayOrder(env.RAZORPAY_KEY_ID, env.RAZORPAY_KEY_SECRET);
-    return jsonRes({
-      orderId:  order.id,
-      amount:   order.amount,
-      currency: order.currency,
-      keyId:    env.RAZORPAY_KEY_ID   // public key — safe to return
-    });
+    return jsonRes({ orderId: order.id, amount: order.amount, currency: order.currency, keyId: env.RAZORPAY_KEY_ID });
   } catch (e) {
-    console.error('create-order error:', e);
+    console.error('create-order:', e);
     return jsonRes({ error: 'Could not create payment order: ' + e.message }, 500);
   }
 }
 
 async function handleOptimize(body, env) {
-  const { password, resumeText, jobDescription,
+  const { admin_session, resumeText, jobDescription,
           razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
-
   if (!resumeText || !jobDescription) {
     return jsonRes({ error: 'resumeText and jobDescription are required' }, 400);
   }
 
-  // ── Authorization: admin password OR valid Razorpay payment ──
-  if (password) {
-    // Admin path
-    if (password !== env.ACCESS_PASSWORD) {
-      return jsonRes({ error: 'Invalid admin password' }, 401);
-    }
+  // Auth: admin session token OR Razorpay payment
+  if (admin_session) {
+    if (!env.TOTP_SECRET) return jsonRes({ error: 'Admin not configured' }, 503);
+    const valid = await verifyAdminSession(admin_session, env.TOTP_SECRET);
+    if (!valid) return jsonRes({ error: 'Admin session expired. Re-enter your TOTP code.' }, 401);
   } else if (razorpay_order_id && razorpay_payment_id && razorpay_signature) {
-    // Paid path — verify signature server-side
-    if (!env.RAZORPAY_KEY_SECRET) {
-      return jsonRes({ error: 'Payment verification not configured' }, 503);
-    }
+    if (!env.RAZORPAY_KEY_SECRET) return jsonRes({ error: 'Payment verification not configured' }, 503);
     const valid = await verifyRazorpaySignature(
-      razorpay_order_id, razorpay_payment_id, razorpay_signature,
-      env.RAZORPAY_KEY_SECRET
-    );
-    if (!valid) {
-      return jsonRes({ error: 'Payment signature verification failed. Contact support if you were charged.' }, 402);
-    }
+      razorpay_order_id, razorpay_payment_id, razorpay_signature, env.RAZORPAY_KEY_SECRET);
+    if (!valid) return jsonRes({ error: 'Payment signature verification failed.' }, 402);
   } else {
-    return jsonRes({ error: 'Authorization required: provide admin password or valid payment data.' }, 401);
+    return jsonRes({ error: 'Authorization required.' }, 401);
   }
 
-  // ── Run optimization ──
   try {
-    const jdKeywords    = extractJDKeywords(jobDescription);
-    const resumeTokens  = tokenize(resumeText);
-    const beforeScore   = computeScore(jdKeywords, resumeTokens);
+    // Score BEFORE — on raw resume text
+    const jdKeywords  = extractJDKeywords(jobDescription);
+    const beforeSet   = canonicalSet(resumeText);
+    const beforeScore = computeScore(jdKeywords, beforeSet);
 
-    const resume = await callClaude(resumeText, jobDescription, env.ANTHROPIC_API_KEY);
+    // AI rewrite — pass top JD terms into prompt for awareness
+    const resume = await callClaude(resumeText, jobDescription, env.ANTHROPIC_API_KEY, jdKeywords);
 
-    const optimizedText   = resumeToScoringText(resume);
-    const optimizedTokens = tokenize(optimizedText);
-    const afterScore      = computeScore(jdKeywords, optimizedTokens);
+    // Score AFTER — on the FINAL optimized resume text (same scorer)
+    const optimizedText = resumeToScoringText(resume);
+    const afterSet      = canonicalSet(optimizedText);
+    const afterScore    = computeScore(jdKeywords, afterSet);
 
+    // Missing = JD terms still not present in optimized resume
     const missingKeywords = jdKeywords
-      .filter(k => !resumeTokens.has(k.kw) && optimizedTokens.has(k.kw))
+      .filter(k => !afterSet.has(k.kw))
       .slice(0, 25)
       .map(k => k.kw);
 
     return jsonRes({ beforeScore, afterScore, missingKeywords, resume });
-
   } catch (e) {
-    console.error('Optimization error:', e);
+    console.error('Optimize:', e);
     return jsonRes({ error: e.message || 'Optimization failed' }, 500);
   }
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
+// ── Main ───────────────────────────────────────────────────────────────────
 export default {
   async fetch(request, env) {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS });
-    }
-    if (request.method !== 'POST') {
-      return jsonRes({ error: 'Method not allowed' }, 405);
-    }
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    if (request.method !== 'POST')    return jsonRes({ error: 'Method not allowed' }, 405);
 
     let body;
     try { body = await request.json(); }
     catch { return jsonRes({ error: 'Invalid JSON body' }, 400); }
 
-    const { action = 'optimize' } = body;
-
-    switch (action) {
-      case 'ping':         return handlePing(body, env);
+    switch (body.action || 'optimize') {
+      case 'verify-totp':  return handleVerifyTOTP(body, env);
       case 'create-order': return handleCreateOrder(env);
       case 'optimize':     return handleOptimize(body, env);
-      default:             return jsonRes({ error: `Unknown action: ${action}` }, 400);
+      default:             return jsonRes({ error: `Unknown action: ${body.action}` }, 400);
     }
   }
 };

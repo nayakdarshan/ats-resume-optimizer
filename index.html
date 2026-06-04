@@ -194,13 +194,20 @@ Requirements:
 <div id="adminPanel" class="admin-panel" style="display:none" role="dialog" aria-modal="true">
   <!-- Login view -->
   <div id="adminLoginView">
-    <div class="admin-panel-title">Access</div>
+    <div class="admin-panel-title">Authenticator Code</div>
     <div id="adminError" class="admin-error" style="display:none"></div>
     <div class="admin-pw-row">
-      <input type="password" id="adminPwInput" class="admin-pw-input"
-             placeholder="Password…" autocomplete="off" />
+      <input type="text"
+             id="adminCodeInput"
+             class="admin-pw-input admin-code-input"
+             inputmode="numeric"
+             pattern="[0-9]*"
+             autocomplete="one-time-code"
+             maxlength="6"
+             placeholder="123 456" />
       <button id="adminSubmitBtn" class="admin-submit-btn">→</button>
     </div>
+    <div class="admin-hint">6-digit code from Google Authenticator / Authy</div>
   </div>
   <!-- Active view -->
   <div id="adminActiveView" style="display:none">
