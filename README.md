@@ -95,7 +95,7 @@ If a critical skill is genuinely missing, the tool tells you in the gap table �
 
 ---
 
-## 💰 Pricing
+## 💰 Pricing — and why it costs ₹20
 
 <div align="center">
 
@@ -108,9 +108,17 @@ If a critical skill is genuinely missing, the tool tells you in the gap table �
 | 🏦 Net Banking | ✅ |
 | 📱 Wallets | ✅ |
 
-No subscription. No account needed. Pay only for what you use, securely via Razorpay.
+No subscription. No account needed. Pay only for what you use.
 
 </div>
+
+### Honest breakdown — where your ₹20 goes
+
+Every optimization makes a real call to **Anthropic's Claude Sonnet** — one of the most capable AI models in the world — to analyze your resume against the job description and rewrite it. Each call typically consumes **~6,000–9,000 AI tokens** (input + output), which on Anthropic's pricing works out to **roughly the same ₹20 you're paying**.
+
+In other words: **I'm not profiting from this — I'm covering cost**. Running this tool free would cost me, an individual developer, hundreds of rupees per day if even a handful of people used it. The ₹20 keeps the AI lights on for the next person too.
+
+If you'd still like to support the project beyond the cost of optimization itself, there's a tip jar at the bottom of this page ☕
 
 ---
 
@@ -383,127 +391,6 @@ ats-resume-optimizer/
 
 ---
 
-## 🚀 Self-Hosting
-
-### Prerequisites
-- Node.js 22+ (for Wrangler)
-- A Cloudflare account (free tier works)
-- An Anthropic API key
-- A Razorpay account (test mode keys work without KYC)
-
-### 1. Clone & deploy frontend
-```bash
-git clone https://github.com/nayakdarshan/ats-resume-optimizer.git
-cd ats-resume-optimizer
-# Enable GitHub Pages in repo settings → Pages → Source: main branch
-```
-
-### 2. Deploy the Worker
-```bash
-npm install -g wrangler
-wrangler login
-cd worker
-wrangler deploy
-# Note the URL printed: https://ats-optimizer.<your-subdomain>.workers.dev
-```
-
-### 3. Set the four secrets
-```bash
-wrangler secret put ANTHROPIC_API_KEY   # sk-ant-...
-wrangler secret put RAZORPAY_KEY_ID     # rzp_test_... or rzp_live_...
-wrangler secret put RAZORPAY_KEY_SECRET # from Razorpay dashboard
-wrangler secret put TOTP_SECRET         # base32 string (generate one — see below)
-```
-
-### 4. Generate a TOTP secret (for admin mode)
-```bash
-node -e "
-const c = require('crypto');
-const a = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-let bits = 0, value = 0, out = '';
-for (const b of c.randomBytes(20)) {
-  value = (value << 8) | b; bits += 8;
-  while (bits >= 5) { out += a[(value >>> (bits - 5)) & 31]; bits -= 5; }
-}
-console.log(out);
-"
-```
-Then import into Google Authenticator / Authy: **"Enter a setup key"** → paste the base32.
-
-### 5. Wire the Worker URL into the frontend
-Open `app.js`, line 2:
-```js
-const WORKER_URL = 'https://ats-optimizer.<your-subdomain>.workers.dev';
-```
-Commit and push — GitHub Pages auto-redeploys.
-
----
-
-## 📡 Worker API Reference
-
-All endpoints: `POST` with JSON body.
-
-### `verify-totp`
-```json
-// Request
-{ "action": "verify-totp", "code": "123456" }
-
-// Response (200)
-{ "ok": true, "sessionToken": "<exp>.<hex_sig>", "expiresIn": 3600 }
-
-// Response (401)
-{ "error": "Invalid or expired code" }
-```
-
-### `create-order`
-```json
-// Request
-{ "action": "create-order" }
-
-// Response (200)
-{ "orderId": "order_xxx", "amount": 2000, "currency": "INR", "keyId": "rzp_test_xxx" }
-```
-
-### `optimize` (paid path)
-```json
-// Request
-{
-  "action": "optimize",
-  "razorpay_order_id": "order_xxx",
-  "razorpay_payment_id": "pay_xxx",
-  "razorpay_signature": "<hex>",
-  "resumeText": "...",
-  "jobDescription": "..."
-}
-
-// Response (200)
-{
-  "beforeScore": 42,
-  "afterScore": 89,
-  "missingKeywords": ["graphql", "kubernetes"],
-  "resume": {
-    "name": "...",
-    "title": "...",
-    "contact": { "email": "...", "phone": "...", "location": "...", "links": [] },
-    "summary": "...",
-    "skills": [ { "category": "Frontend", "items": ["..."] } ],
-    "experience": [ { "company": "...", "title": "...", "dates": "...", "bullets": ["..."] } ],
-    "projects": [],
-    "education": [ { "degree": "...", "institution": "...", "dates": "..." } ]
-  }
-}
-
-// Response (402) — bad signature → AI is never called
-{ "error": "Payment signature verification failed." }
-```
-
-### `optimize` (admin path)
-```json
-{ "action": "optimize", "admin_session": "<exp>.<sig>", "resumeText": "...", "jobDescription": "..." }
-```
-
----
-
 ## 🤝 Credits
 
 - **Architecture, product design, security model, scoring engine design:** [Darshan Nayak](https://www.linkedin.com/in/darshan-nayak-4a9a27143/)
@@ -511,6 +398,22 @@ All endpoints: `POST` with JSON body.
 - **AI rewrite engine:** Claude Sonnet 4.6
 - **Hosting:** GitHub Pages (frontend) + Cloudflare Workers (edge)
 - **Payments:** Razorpay
+
+---
+
+<div align="center">
+
+## ☕ Enjoyed using it? Buy me a coffee
+
+This tool is a labour of love. Every ₹20 you pay goes to Anthropic to keep the AI running — none of it reaches me. If it actually helped you land an interview, a small tip would mean a lot and keeps me motivated to ship the next feature.
+
+<br>
+
+[![Buy Me a Coffee](https://img.shields.io/badge/☕_Buy_me_a_coffee-Tip_via_Razorpay-FF813F?style=for-the-badge)](https://razorpay.me/@darshannayak)
+
+**[razorpay.me/@darshannayak](https://razorpay.me/@darshannayak)** — any amount, any payment method
+
+</div>
 
 ---
 
