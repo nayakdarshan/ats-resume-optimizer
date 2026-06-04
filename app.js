@@ -5,8 +5,8 @@ const WORKER_URL = 'https://ats-optimizer.nayakdarshan.workers.dev';
 
 // ── Session state (never persisted to storage) ────────────────────────────────
 let _parsedResumeText = null;   // PDF text extracted by pdf.js
-let _isAdminMode      = false;  // true after valid admin password
-let _adminPassword    = null;   // held in memory only
+let _isAdminMode      = false;  // true after valid TOTP code
+let _adminSession     = null;   // HMAC-signed session token from Worker (memory only)
 
 // ── Keyword scoring (synonym-aware) ───────────────────────────────────────────
 // Mirrors worker/worker.js — same vocab/synonyms so worker & frontend agree.
@@ -398,41 +398,47 @@ function toggleAdminPanel() {
   const isOpen = panel.style.display !== 'none';
   panel.style.display = isOpen ? 'none' : 'block';
   if (!isOpen) {
-    // Show correct view
     document.getElementById('adminLoginView').style.display  = _isAdminMode ? 'none'  : 'block';
     document.getElementById('adminActiveView').style.display = _isAdminMode ? 'block' : 'none';
     document.getElementById('adminError').style.display = 'none';
     if (!_isAdminMode) {
-      document.getElementById('adminPwInput').value = '';
-      setTimeout(() => document.getElementById('adminPwInput').focus(), 50);
+      document.getElementById('adminCodeInput').value = '';
+      setTimeout(() => document.getElementById('adminCodeInput').focus(), 50);
     }
   }
 }
 
-async function submitAdminPassword() {
-  const pw     = document.getElementById('adminPwInput').value.trim();
+async function submitAdminCode() {
+  const code   = document.getElementById('adminCodeInput').value.replace(/\D/g, '');
   const errEl  = document.getElementById('adminError');
   const btn    = document.getElementById('adminSubmitBtn');
-  if (!pw) return;
+  if (!/^\d{6}$/.test(code)) {
+    errEl.textContent   = 'Enter the 6-digit code from your authenticator app.';
+    errEl.style.display = 'block';
+    return;
+  }
 
   errEl.style.display = 'none';
   btn.disabled = true;
   btn.textContent = '…';
 
   try {
-    const res = await fetchWorker({ action: 'ping', password: pw });
-    if (res.status === 401) throw new Error('Wrong password.');
+    const res = await fetchWorker({ action: 'verify-totp', code });
+    if (res.status === 401) throw new Error('Invalid or expired code.');
     if (!res.ok) throw new Error('Server error. Try again.');
 
-    _isAdminMode   = true;
-    _adminPassword = pw;
+    const data = await res.json();
+    if (!data.sessionToken) throw new Error('No session returned.');
+
+    _isAdminMode  = true;
+    _adminSession = data.sessionToken;
     document.getElementById('adminPanel').style.display = 'none';
     updateOptimizeBtn();
     showToast('Admin mode active — optimizations are free.');
   } catch (e) {
     errEl.textContent   = e.message;
     errEl.style.display = 'block';
-    document.getElementById('adminPwInput').select();
+    document.getElementById('adminCodeInput').select();
   } finally {
     btn.disabled    = false;
     btn.textContent = '→';
@@ -440,8 +446,8 @@ async function submitAdminPassword() {
 }
 
 function exitAdminMode() {
-  _isAdminMode   = false;
-  _adminPassword = null;
+  _isAdminMode  = false;
+  _adminSession = null;
   document.getElementById('adminPanel').style.display = 'none';
   updateOptimizeBtn();
 }
@@ -514,7 +520,7 @@ async function optimize() {
     // ── Admin path: skip payment ──────────────────────────────────────────────
     workerPayload = {
       action:        'optimize',
-      password:      _adminPassword,
+      admin_session: _adminSession,
       resumeText,
       jobDescription: jdText
     };
@@ -795,11 +801,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('adminIconBtn').addEventListener('click', toggleAdminPanel);
 
   // Admin panel keyboard + button
-  document.getElementById('adminPwInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') submitAdminPassword();
+  const codeInput = document.getElementById('adminCodeInput');
+  codeInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  submitAdminCode();
     if (e.key === 'Escape') document.getElementById('adminPanel').style.display = 'none';
   });
-  document.getElementById('adminSubmitBtn').addEventListener('click', submitAdminPassword);
+  // Sanitize input: digits only, max 6
+  codeInput.addEventListener('input', e => {
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+  });
+  document.getElementById('adminSubmitBtn').addEventListener('click', submitAdminCode);
 
   // Close admin panel when clicking outside
   document.addEventListener('click', e => {

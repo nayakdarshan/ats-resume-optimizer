@@ -2,9 +2,17 @@
  * ATS Resume Optimizer — Cloudflare Worker
  *
  * Secrets:
- *   ANTHROPIC_API_KEY, ACCESS_PASSWORD, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+ *   ANTHROPIC_API_KEY    — Anthropic API key
+ *   TOTP_SECRET          — base32 secret for admin TOTP (Google Authenticator/Authy)
+ *   RAZORPAY_KEY_ID      — Razorpay publishable key
+ *   RAZORPAY_KEY_SECRET  — Razorpay secret key (NEVER in frontend)
+ *   ACCESS_PASSWORD      — DEPRECATED, no longer used (safe to delete)
  *
- * Actions: ping | create-order | optimize  (admin-password OR Razorpay-paid)
+ * Actions:
+ *   verify-totp   { code }                                       → 200 { ok, sessionToken } | 401
+ *   create-order  {}                                             → 200 { orderId, … }       | 503
+ *   optimize      { admin_session, resumeText, jobDescription }  → admin path
+ *   optimize      { razorpay_*, resumeText, jobDescription }     → paid path (HMAC verified)
  */
 
 // ── Vocabulary — multi-word phrases first ──────────────────────────────────
@@ -265,6 +273,95 @@ async function verifyRazorpaySignature(orderId, paymentId, signature, keySecret)
   return computed === signature;
 }
 
+// ── TOTP (RFC 6238) + admin session tokens ────────────────────────────────
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32Decode(input) {
+  const clean = input.toUpperCase().replace(/=+$/, '').replace(/\s/g, '');
+  const bytes = [];
+  let bits = 0, value = 0;
+  for (const ch of clean) {
+    const idx = BASE32_ALPHABET.indexOf(ch);
+    if (idx === -1) throw new Error('Invalid base32 char: ' + ch);
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
+async function totpCodeAt(base32Secret, timeSec) {
+  const counter = Math.floor(timeSec / 30);
+  // 8-byte big-endian counter
+  const counterBuf = new ArrayBuffer(8);
+  const dv = new DataView(counterBuf);
+  dv.setUint32(0, Math.floor(counter / 0x100000000));
+  dv.setUint32(4, counter & 0xffffffff);
+
+  const key = await crypto.subtle.importKey(
+    'raw', base32Decode(base32Secret),
+    { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']
+  );
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, counterBuf));
+  // Dynamic truncation (RFC 6238 §5.3)
+  const off = sig[sig.length - 1] & 0x0f;
+  const bin = ((sig[off]     & 0x7f) << 24) |
+              ((sig[off + 1] & 0xff) << 16) |
+              ((sig[off + 2] & 0xff) <<  8) |
+               (sig[off + 3] & 0xff);
+  return String(bin % 1_000_000).padStart(6, '0');
+}
+
+// Verify TOTP with ±1 step window for clock skew tolerance (≈90s effective window)
+async function verifyTOTP(token, base32Secret) {
+  if (!/^\d{6}$/.test(String(token || ''))) return false;
+  const now = Math.floor(Date.now() / 1000);
+  for (let w = -1; w <= 1; w++) {
+    const expected = await totpCodeAt(base32Secret, now + w * 30);
+    // constant-time compare
+    if (token.length === expected.length) {
+      let eq = 0;
+      for (let i = 0; i < token.length; i++) eq |= token.charCodeAt(i) ^ expected.charCodeAt(i);
+      if (eq === 0) return true;
+    }
+  }
+  return false;
+}
+
+// Issue/verify HMAC-signed admin session — keyed by TOTP_SECRET
+async function hmacSha256Hex(key, msg) {
+  const enc = new TextEncoder();
+  const ck = await crypto.subtle.importKey('raw', enc.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const buf = await crypto.subtle.sign('HMAC', ck, enc.encode(msg));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function issueAdminSession(secret, ttlSec = 3600) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const payload = `admin|${exp}`;
+  const sig = await hmacSha256Hex(secret, payload);
+  return `${exp}.${sig}`;
+}
+
+async function verifyAdminSession(token, secret) {
+  if (!token || typeof token !== 'string') return false;
+  const dot = token.indexOf('.');
+  if (dot < 1) return false;
+  const exp = parseInt(token.slice(0, dot), 10);
+  const sig = token.slice(dot + 1);
+  if (!exp || exp < Math.floor(Date.now() / 1000)) return false;
+  const expected = await hmacSha256Hex(secret, `admin|${exp}`);
+  // constant-time compare
+  if (sig.length !== expected.length) return false;
+  let eq = 0;
+  for (let i = 0; i < sig.length; i++) eq |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+  return eq === 0;
+}
+
 // ── Claude API ─────────────────────────────────────────────────────────────
 async function callClaude(resumeText, jobDescription, apiKey, jdTopTerms) {
   const jdTermsHint = jdTopTerms.slice(0, 30).map(t => t.kw).join(', ');
@@ -360,9 +457,13 @@ function jsonRes(body, status = 200) {
 }
 
 // ── Handlers ───────────────────────────────────────────────────────────────
-function handlePing(body, env) {
-  if (!body.password || body.password !== env.ACCESS_PASSWORD) return jsonRes({ error: 'Invalid password' }, 401);
-  return jsonRes({ ok: true });
+async function handleVerifyTOTP(body, env) {
+  if (!env.TOTP_SECRET) return jsonRes({ error: 'Admin TOTP not configured' }, 503);
+  const code = String(body.code || '').trim();
+  const ok = await verifyTOTP(code, env.TOTP_SECRET);
+  if (!ok) return jsonRes({ error: 'Invalid or expired code' }, 401);
+  const sessionToken = await issueAdminSession(env.TOTP_SECRET, 3600); // 1 h
+  return jsonRes({ ok: true, sessionToken, expiresIn: 3600 });
 }
 
 async function handleCreateOrder(env) {
@@ -377,15 +478,17 @@ async function handleCreateOrder(env) {
 }
 
 async function handleOptimize(body, env) {
-  const { password, resumeText, jobDescription,
+  const { admin_session, resumeText, jobDescription,
           razorpay_order_id, razorpay_payment_id, razorpay_signature } = body;
   if (!resumeText || !jobDescription) {
     return jsonRes({ error: 'resumeText and jobDescription are required' }, 400);
   }
 
-  // Auth
-  if (password) {
-    if (password !== env.ACCESS_PASSWORD) return jsonRes({ error: 'Invalid admin password' }, 401);
+  // Auth: admin session token OR Razorpay payment
+  if (admin_session) {
+    if (!env.TOTP_SECRET) return jsonRes({ error: 'Admin not configured' }, 503);
+    const valid = await verifyAdminSession(admin_session, env.TOTP_SECRET);
+    if (!valid) return jsonRes({ error: 'Admin session expired. Re-enter your TOTP code.' }, 401);
   } else if (razorpay_order_id && razorpay_payment_id && razorpay_signature) {
     if (!env.RAZORPAY_KEY_SECRET) return jsonRes({ error: 'Payment verification not configured' }, 503);
     const valid = await verifyRazorpaySignature(
@@ -433,7 +536,7 @@ export default {
     catch { return jsonRes({ error: 'Invalid JSON body' }, 400); }
 
     switch (body.action || 'optimize') {
-      case 'ping':         return handlePing(body, env);
+      case 'verify-totp':  return handleVerifyTOTP(body, env);
       case 'create-order': return handleCreateOrder(env);
       case 'optimize':     return handleOptimize(body, env);
       default:             return jsonRes({ error: `Unknown action: ${body.action}` }, 400);
