@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://nayakdarshan.github.io/ats-resume-optimizer/sitemap.xml
